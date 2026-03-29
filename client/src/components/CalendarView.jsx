@@ -6,10 +6,10 @@ import {
 import { sr } from 'date-fns/locale'
 
 const CATEGORY_COLORS = {
-  hotel: { bg: 'bg-blue-500', text: 'text-blue-700', light: 'bg-blue-50' },
-  klinika: { bg: 'bg-rose-500', text: 'text-rose-700', light: 'bg-rose-50' },
-  investitor: { bg: 'bg-orange-500', text: 'text-orange-700', light: 'bg-orange-50' },
-  prodavac: { bg: 'bg-violet-500', text: 'text-violet-700', light: 'bg-violet-50' },
+  hotel: { bg: 'bg-blue-500', text: 'text-blue-400', light: 'bg-blue-900/30' },
+  klinika: { bg: 'bg-rose-500', text: 'text-rose-400', light: 'bg-rose-900/30' },
+  investitor: { bg: 'bg-orange-500', text: 'text-orange-400', light: 'bg-orange-900/30' },
+  prodavac: { bg: 'bg-violet-500', text: 'text-violet-400', light: 'bg-violet-900/30' },
 }
 
 const CATEGORY_LABELS = {
@@ -69,32 +69,32 @@ export default function CalendarView({ onSelectLead }) {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Kalendar sastanaka</h1>
-          <p className="text-sm text-gray-500 mt-1">Pregled svih zakazanih sastanaka</p>
+          <h1 className="text-2xl font-bold text-gray-100">Kalendar sastanaka</h1>
+          <p className="text-sm text-gray-400 mt-1">Pregled svih zakazanih sastanaka</p>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-6">
         {/* Calendar */}
         <div className="col-span-2">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm">
             {/* Month nav */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition text-gray-600">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 hover:bg-gray-700 rounded-lg transition text-gray-300">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
               </button>
-              <h2 className="text-lg font-semibold text-gray-800 capitalize">
+              <h2 className="text-lg font-semibold text-gray-100 capitalize">
                 {format(currentMonth, 'LLLL yyyy', { locale: sr })}
               </h2>
-              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 hover:bg-gray-100 rounded-lg transition text-gray-600">
+              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 hover:bg-gray-700 rounded-lg transition text-gray-300">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
               </button>
             </div>
 
             {/* Day headers */}
-            <div className="grid grid-cols-7 border-b border-gray-100">
+            <div className="grid grid-cols-7 border-b border-gray-700">
               {['Pon', 'Uto', 'Sre', 'Čet', 'Pet', 'Sub', 'Ned'].map(d => (
-                <div key={d} className="px-2 py-2 text-center text-xs font-semibold text-gray-400 uppercase">{d}</div>
+                <div key={d} className="px-2 py-2 text-center text-xs font-semibold text-gray-500 uppercase">{d}</div>
               ))}
             </div>
 
@@ -110,12 +110,12 @@ export default function CalendarView({ onSelectLead }) {
                   <div
                     key={i}
                     onClick={() => setSelectedDay(d)}
-                    className={`min-h-[80px] p-1.5 border-b border-r border-gray-50 cursor-pointer transition hover:bg-gray-50 ${
-                      isSelected ? 'bg-emerald-50 ring-1 ring-inset ring-emerald-300' : ''
+                    className={`min-h-[80px] p-1.5 border-b border-r border-gray-700/50 cursor-pointer transition hover:bg-gray-700/50 ${
+                      isSelected ? 'bg-emerald-900/30 ring-1 ring-inset ring-emerald-600' : ''
                     } ${!inMonth ? 'opacity-30' : ''}`}
                   >
                     <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                      today ? 'bg-emerald-600 text-white' : 'text-gray-600'
+                      today ? 'bg-emerald-600 text-white' : 'text-gray-300'
                     }`}>
                       {format(d, 'd')}
                     </div>
@@ -130,7 +130,7 @@ export default function CalendarView({ onSelectLead }) {
                         )
                       })}
                       {dayMeetings.length > 3 && (
-                        <div className="text-[10px] text-gray-400 pl-1">+{dayMeetings.length - 3} jos</div>
+                        <div className="text-[10px] text-gray-500 pl-1">+{dayMeetings.length - 3} jos</div>
                       )}
                     </div>
                   </div>
@@ -143,12 +143,12 @@ export default function CalendarView({ onSelectLead }) {
         {/* Side panel */}
         <div className="space-y-4">
           {/* Selected day detail */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+          <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-4">
+            <h3 className="text-sm font-semibold text-gray-200 mb-3">
               {selectedDay ? format(selectedDay, 'd. MMMM yyyy', { locale: sr }) : 'Izaberite dan'}
             </h3>
             {selectedDay && selectedDayMeetings.length === 0 && (
-              <p className="text-xs text-gray-400">Nema zakazanih dogadjaja</p>
+              <p className="text-xs text-gray-500">Nema zakazanih dogadjaja</p>
             )}
             <div className="space-y-2">
               {selectedDayMeetings.map((m, i) => {
@@ -157,22 +157,22 @@ export default function CalendarView({ onSelectLead }) {
                 return (
                   <div
                     key={i}
-                    className={`${isCall ? 'bg-yellow-50 border border-yellow-200' : colors.light} rounded-lg p-3 cursor-pointer hover:shadow-sm transition`}
+                    className={`${isCall ? 'bg-yellow-900/30 border border-yellow-700/50' : colors.light + ' border border-gray-700'} rounded-lg p-3 cursor-pointer hover:shadow-sm transition`}
                     onClick={() => onSelectLead && onSelectLead(m)}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-800">
+                      <span className="text-sm font-medium text-gray-100">
                         {isCall ? '📞 ' : '📅 '}{m.name}
                       </span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isCall ? 'bg-yellow-400' : colors.bg} text-white font-medium`}>
                         {isCall ? 'Poziv' : CATEGORY_LABELS[m.category]}
                       </span>
                     </div>
-                    {m.city && <div className="text-xs text-gray-500">📍 {m.city}</div>}
+                    {m.city && <div className="text-xs text-gray-400">📍 {m.city}</div>}
                     {m.phone1 && (
-                      <a href={`tel:${m.phone1}`} className="text-xs text-emerald-600 hover:underline" onClick={e => e.stopPropagation()}>📞 {m.phone1}</a>
+                      <a href={`tel:${m.phone1}`} className="text-xs text-emerald-400 hover:underline" onClick={e => e.stopPropagation()}>📞 {m.phone1}</a>
                     )}
-                    {m.meeting_notes && !isCall && <div className="text-xs text-gray-500 mt-1 line-clamp-2">{m.meeting_notes}</div>}
+                    {m.meeting_notes && !isCall && <div className="text-xs text-gray-400 mt-1 line-clamp-2">{m.meeting_notes}</div>}
                   </div>
                 )
               })}
@@ -180,18 +180,18 @@ export default function CalendarView({ onSelectLead }) {
           </div>
 
           {/* Follow-up tracker */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-1">Follow-up potreban</h3>
-            <p className="text-xs text-gray-400 mb-3">Pozvani leadovi bez odgovora</p>
+          <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-4">
+            <h3 className="text-sm font-semibold text-gray-200 mb-1">Follow-up potreban</h3>
+            <p className="text-xs text-gray-500 mb-3">Pozvani leadovi bez odgovora</p>
 
             {followups.length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-2">Sve je u toku!</p>
+              <p className="text-xs text-gray-500 text-center py-2">Sve je u toku!</p>
             ) : (
               <div className="space-y-2 max-h-[400px] overflow-y-auto">
                 {followups.map((f, i) => {
                   const days = f.days_since_call || 0
-                  const urgency = days >= 7 ? 'bg-red-50 border-red-200' : days >= 5 ? 'bg-orange-50 border-orange-200' : 'bg-yellow-50 border-yellow-200'
-                  const urgencyText = days >= 7 ? 'text-red-600' : days >= 5 ? 'text-orange-600' : 'text-yellow-600'
+                  const urgency = days >= 7 ? 'bg-red-900/30 border-red-700/50' : days >= 5 ? 'bg-orange-900/30 border-orange-700/50' : 'bg-yellow-900/30 border-yellow-700/50'
+                  const urgencyText = days >= 7 ? 'text-red-400' : days >= 5 ? 'text-orange-400' : 'text-yellow-400'
                   return (
                     <div
                       key={i}
@@ -199,14 +199,14 @@ export default function CalendarView({ onSelectLead }) {
                       onClick={() => onSelectLead && onSelectLead(f)}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-gray-800">{f.name}</span>
+                        <span className="text-xs font-medium text-gray-100">{f.name}</span>
                         <span className={`text-[10px] font-bold ${urgencyText}`}>{days}d</span>
                       </div>
-                      <div className="text-[10px] text-gray-500 mt-0.5">
+                      <div className="text-[10px] text-gray-400 mt-0.5">
                         {f.city && `📍 ${f.city}`}
                         {f.phone1 && ` · 📞 ${f.phone1}`}
                       </div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">Pozvan: {f.call_date}</div>
+                      <div className="text-[10px] text-gray-500 mt-0.5">Pozvan: {f.call_date}</div>
                     </div>
                   )
                 })}

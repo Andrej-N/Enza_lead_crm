@@ -38,19 +38,19 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-[600px] max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between z-10 rounded-t-xl">
-          <h2 className="text-lg font-bold text-gray-800">Dodaj novi lead</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={onClose}>
+      <div className="bg-gray-800 rounded-xl shadow-2xl w-[600px] max-h-[85vh] overflow-y-auto border border-gray-700" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center justify-between z-10 rounded-t-xl">
+          <h2 className="text-lg font-bold text-gray-100">Dodaj novi lead</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-2xl">&times;</button>
         </div>
 
         <form onSubmit={submit} className="px-6 py-4 space-y-4">
           {/* Category */}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Kategorija *</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">Kategorija *</label>
             <select value={form.category} onChange={e => set('category', e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm">
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100">
               <option value="hotel">Hotel</option>
               <option value="klinika">Privatna klinika</option>
               <option value="investitor">Investitor</option>
@@ -60,59 +60,59 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
 
           {/* Name */}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Naziv *</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">Naziv *</label>
             <input type="text" value={form.name} onChange={e => set('name', e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Ime hotela / klinike / firme" required />
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100 placeholder-gray-500" placeholder="Ime hotela / klinike / firme" required />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Grad</label>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Grad</label>
               <input type="text" value={form.city} onChange={e => set('city', e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm" />
+                className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Adresa</label>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Adresa</label>
               <input type="text" value={form.address} onChange={e => set('address', e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm" />
+                className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
             </div>
           </div>
 
           {/* Contact */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Telefon</label>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Telefon</label>
               <input type="text" value={form.phone1} onChange={e => set('phone1', e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm" />
+                className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">Email</label>
+              <label className="block text-xs font-semibold text-gray-400 mb-1">Email</label>
               <input type="text" value={form.email} onChange={e => set('email', e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg text-sm" />
+                className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Kontakt osoba</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">Kontakt osoba</label>
             <input type="text" value={form.contact_person} onChange={e => set('contact_person', e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm" />
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Website</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">Website</label>
             <input type="text" value={form.website} onChange={e => set('website', e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm" />
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" />
           </div>
 
           {/* Hotel specific */}
           {form.category === 'hotel' && (
-            <div className="bg-blue-50 rounded-lg p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-blue-700">Hotel detalji</h3>
+            <div className="bg-blue-900/20 rounded-lg p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-blue-400">Hotel detalji</h3>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Podkategorija</label>
+                  <label className="block text-xs text-gray-400 mb-1">Podkategorija</label>
                   <select value={form.subcategory} onChange={e => set('subcategory', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm">
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100">
                     <option value="">Izaberi</option>
                     <option value="Luksuzni 5*">Luksuzni 5*</option>
                     <option value="Luksuzni 4-5*">Luksuzni 4-5*</option>
@@ -124,14 +124,14 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Zvezdice</label>
+                  <label className="block text-xs text-gray-400 mb-1">Zvezdice</label>
                   <input type="text" value={form.stars} onChange={e => set('stars', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" placeholder="5*" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" placeholder="5*" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Br. soba</label>
+                  <label className="block text-xs text-gray-400 mb-1">Br. soba</label>
                   <input type="text" value={form.num_rooms} onChange={e => set('num_rooms', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
               </div>
             </div>
@@ -139,23 +139,23 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
 
           {/* Klinika specific */}
           {form.category === 'klinika' && (
-            <div className="bg-rose-50 rounded-lg p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-rose-700">Klinika detalji</h3>
+            <div className="bg-rose-900/20 rounded-lg p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-rose-400">Klinika detalji</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Tip ustanove</label>
+                  <label className="block text-xs text-gray-400 mb-1">Tip ustanove</label>
                   <input type="text" value={form.clinic_type} onChange={e => set('clinic_type', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Br. kreveta</label>
+                  <label className="block text-xs text-gray-400 mb-1">Br. kreveta</label>
                   <input type="text" value={form.num_beds} onChange={e => set('num_beds', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
               </div>
               <div className="flex gap-4">
                 {[['has_stationary', 'Stacionar'], ['has_surgery', 'Hirurgija'], ['has_maternity', 'Porodiliste'], ['has_palliative', 'Palijativa']].map(([f, l]) => (
-                  <label key={f} className="flex items-center gap-1 text-xs text-gray-600">
+                  <label key={f} className="flex items-center gap-1 text-xs text-gray-300">
                     <input type="checkbox" checked={!!form[f]} onChange={e => set(f, e.target.checked ? 1 : 0)} className="rounded" />
                     {l}
                   </label>
@@ -166,32 +166,32 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
 
           {/* Investitor specific */}
           {form.category === 'investitor' && (
-            <div className="bg-orange-50 rounded-lg p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-orange-700">Investitor detalji</h3>
+            <div className="bg-orange-900/20 rounded-lg p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-orange-400">Investitor detalji</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Projekat</label>
+                  <label className="block text-xs text-gray-400 mb-1">Projekat</label>
                   <input type="text" value={form.project_name} onChange={e => set('project_name', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Velicina</label>
+                  <label className="block text-xs text-gray-400 mb-1">Velicina</label>
                   <select value={form.investor_size} onChange={e => set('investor_size', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm">
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100">
                     <option value="mali">Mali (&lt;2000 m2)</option>
                     <option value="srednji">Srednji (2000-5000 m2)</option>
                     <option value="veliki">Veliki (5000+ m2)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Povrsina (m2)</label>
+                  <label className="block text-xs text-gray-400 mb-1">Povrsina (m2)</label>
                   <input type="text" value={form.area_sqm} onChange={e => set('area_sqm', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Faza gradnje</label>
+                  <label className="block text-xs text-gray-400 mb-1">Faza gradnje</label>
                   <input type="text" value={form.construction_phase} onChange={e => set('construction_phase', e.target.value)}
-                    className="w-full px-2 py-1 border rounded text-sm" />
+                    className="w-full px-2 py-1 border border-gray-600 rounded text-sm bg-gray-700 text-gray-100" />
                 </div>
               </div>
             </div>
@@ -199,9 +199,9 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
 
           {/* Notes */}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1">Beleske</label>
+            <label className="block text-xs font-semibold text-gray-400 mb-1">Beleske</label>
             <textarea value={form.notes} onChange={e => set('notes', e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm" rows={3} />
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg text-sm bg-gray-700 text-gray-100" rows={3} />
           </div>
 
           {/* Submit */}
@@ -209,7 +209,7 @@ export default function AddLeadModal({ onClose, onCreate, category }) {
             <button type="submit" className="flex-1 bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700 transition font-medium text-sm">
               Sacuvaj lead
             </button>
-            <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition text-sm">
+            <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition text-sm">
               Otkazi
             </button>
           </div>

@@ -14,7 +14,7 @@ const STATUS_LABELS = {
 }
 
 const STATUS_COLORS = {
-  not_contacted: '#d1d5db',
+  not_contacted: '#6b7280',
   called: '#eab308',
   meeting_scheduled: '#3b82f6',
   negotiation: '#a855f7',
@@ -38,15 +38,21 @@ const CATEGORY_COLORS = {
 
 const FUNNEL_ORDER = ['not_contacted', 'called', 'meeting_scheduled', 'negotiation', 'deal_closed']
 
+const darkTooltipStyle = {
+  contentStyle: { backgroundColor: '#1f2937', border: '1px solid #374151', borderRadius: '8px', color: '#e5e7eb' },
+  itemStyle: { color: '#e5e7eb' },
+  labelStyle: { color: '#9ca3af' },
+}
+
 function WeeklySummaryCard({ data }) {
   if (!data) return null
   const { thisWeek, lastWeek } = data
 
   const delta = (curr, prev) => {
     const d = curr - prev
-    if (d > 0) return <span className="text-emerald-600 font-medium">+{d}</span>
-    if (d < 0) return <span className="text-red-500 font-medium">{d}</span>
-    return <span className="text-gray-400">0</span>
+    if (d > 0) return <span className="text-emerald-400 font-medium">+{d}</span>
+    if (d < 0) return <span className="text-red-400 font-medium">{d}</span>
+    return <span className="text-gray-500">0</span>
   }
 
   const items = [
@@ -58,13 +64,13 @@ function WeeklySummaryCard({ data }) {
   ]
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">Nedeljni pregled</h3>
+    <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-5">
+      <h3 className="text-sm font-semibold text-gray-200 mb-4">Nedeljni pregled</h3>
       <div className="grid grid-cols-5 gap-3">
         {items.map((item, i) => (
           <div key={i} className="text-center">
-            <div className="text-2xl font-bold text-gray-800">{item.value}</div>
-            <div className="text-xs text-gray-500 mt-0.5">{item.label}</div>
+            <div className="text-2xl font-bold text-gray-100">{item.value}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{item.label}</div>
             <div className="text-xs mt-1">vs prosla: {delta(item.value, item.prev)}</div>
           </div>
         ))}
@@ -91,14 +97,14 @@ function PipelineFunnel({ data }) {
   const maxVal = Math.max(...funnelData.map(d => d.value), 1)
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">Pipeline Levak</h3>
+    <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-5">
+      <h3 className="text-sm font-semibold text-gray-200 mb-4">Pipeline Levak</h3>
       <div className="space-y-2">
         {funnelData.map((item, i) => {
           const width = Math.max((item.value / maxVal) * 100, 4)
           return (
             <div key={i} className="flex items-center gap-3">
-              <div className="w-32 text-xs text-gray-600 text-right">{item.name}</div>
+              <div className="w-32 text-xs text-gray-300 text-right">{item.name}</div>
               <div className="flex-1 relative">
                 <div
                   className="h-8 rounded-lg flex items-center justify-center transition-all duration-500"
@@ -131,23 +137,23 @@ function ConversionByCategory({ data }) {
   })
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">Konverzija po kategoriji</h3>
+    <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-5">
+      <h3 className="text-sm font-semibold text-gray-200 mb-4">Konverzija po kategoriji</h3>
       <ResponsiveContainer width="100%" height={250}>
         <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 30 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-          <XAxis type="number" tick={{ fontSize: 11 }} />
-          <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={80} />
-          <Tooltip formatter={(v, name) => [v, name === 'total' ? 'Ukupno' : 'Kontaktirano']} />
-          <Bar dataKey="total" fill="#e5e7eb" radius={[0, 4, 4, 0]} name="Ukupno" />
+          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} />
+          <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#9ca3af' }} width={80} />
+          <Tooltip {...darkTooltipStyle} formatter={(v, name) => [v, name === 'total' ? 'Ukupno' : 'Kontaktirano']} />
+          <Bar dataKey="total" fill="#4b5563" radius={[0, 4, 4, 0]} name="Ukupno" />
           <Bar dataKey="contacted" fill="#10b981" radius={[0, 4, 4, 0]} name="Kontaktirano" />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-6 mt-2">
         {chartData.map((d, i) => (
           <div key={i} className="text-center">
-            <div className="text-lg font-bold text-emerald-600">{d.rate}%</div>
-            <div className="text-[10px] text-gray-400">{d.name}</div>
+            <div className="text-lg font-bold text-emerald-400">{d.rate}%</div>
+            <div className="text-[10px] text-gray-500">{d.name}</div>
           </div>
         ))}
       </div>
@@ -159,14 +165,14 @@ function TopCitiesChart({ data }) {
   if (!data || !data.length) return null
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">Top 10 gradova</h3>
+    <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-5">
+      <h3 className="text-sm font-semibold text-gray-200 mb-4">Top 10 gradova</h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data} layout="vertical" margin={{ left: 10, right: 30 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-          <XAxis type="number" tick={{ fontSize: 11 }} />
-          <YAxis dataKey="city" type="category" tick={{ fontSize: 11 }} width={120} />
-          <Tooltip formatter={(v) => [v, 'Leadova']} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+          <XAxis type="number" tick={{ fontSize: 11, fill: '#9ca3af' }} />
+          <YAxis dataKey="city" type="category" tick={{ fontSize: 11, fill: '#9ca3af' }} width={120} />
+          <Tooltip {...darkTooltipStyle} formatter={(v) => [v, 'Leadova']} />
           <Bar dataKey="cnt" fill="#14b8a6" radius={[0, 6, 6, 0]} />
         </BarChart>
       </ResponsiveContainer>
@@ -184,13 +190,13 @@ function ResponseRateDonut({ stats }) {
 
   const data = [
     { name: 'Kontaktirano', value: contacted, fill: '#10b981' },
-    { name: 'Nije kontaktirano', value: notContacted, fill: '#d1d5db' },
+    { name: 'Nije kontaktirano', value: notContacted, fill: '#6b7280' },
     { name: 'Nije zainteresovano', value: notInterested, fill: '#ef4444' },
   ].filter(d => d.value > 0)
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h3 className="text-sm font-semibold text-gray-700 mb-4">Response Rate</h3>
+    <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm p-5">
+      <h3 className="text-sm font-semibold text-gray-200 mb-4">Response Rate</h3>
       <ResponsiveContainer width="100%" height={250}>
         <PieChart>
           <Pie
@@ -206,14 +212,14 @@ function ResponseRateDonut({ stats }) {
               <Cell key={i} fill={entry.fill} />
             ))}
           </Pie>
-          <Tooltip formatter={(v) => [v, 'Leadova']} />
+          <Tooltip {...darkTooltipStyle} formatter={(v) => [v, 'Leadova']} />
         </PieChart>
       </ResponsiveContainer>
       <div className="flex justify-center gap-4 mt-1">
         {data.map((d, i) => (
           <div key={i} className="flex items-center gap-1.5">
             <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.fill }} />
-            <span className="text-[10px] text-gray-500">{d.name}: {d.value}</span>
+            <span className="text-[10px] text-gray-400">{d.name}: {d.value}</span>
           </div>
         ))}
       </div>
@@ -243,7 +249,7 @@ export default function AnalyticsDashboard({ stats, onExportPDF }) {
         {onExportPDF && (
           <button
             onClick={onExportPDF}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition text-sm font-medium"
+            className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-gray-100 rounded-lg hover:bg-gray-600 transition text-sm font-medium"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
             Eksportuj PDF Izvestaj
