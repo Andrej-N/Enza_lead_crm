@@ -100,6 +100,11 @@ function initSchema(db) {
   try { db.run("ALTER TABLE leads ADD COLUMN phone_verified INTEGER DEFAULT 0"); } catch (e) {}
   try { db.run("ALTER TABLE leads ADD COLUMN email_verified INTEGER DEFAULT 0"); } catch (e) {}
 
+  // Migration: add deal fields
+  try { db.run("ALTER TABLE leads ADD COLUMN deal_value TEXT"); } catch (e) {}
+  try { db.run("ALTER TABLE leads ADD COLUMN deal_description TEXT"); } catch (e) {}
+  try { db.run("ALTER TABLE leads ADD COLUMN deal_date TEXT"); } catch (e) {}
+
   db.run(`
     CREATE TABLE IF NOT EXISTS activity_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

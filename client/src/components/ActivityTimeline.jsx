@@ -36,6 +36,7 @@ export default function ActivityTimeline({ leadId }) {
   const [newNote, setNewNote] = useState('')
   const [noteType, setNoteType] = useState('note')
   const [loading, setLoading] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
 
   const fetchActivities = async () => {
     try {
@@ -48,6 +49,21 @@ export default function ActivityTimeline({ leadId }) {
   }
 
   useEffect(() => { fetchActivities() }, [leadId])
+
+  const deleteActivity = async (activityId) => {
+    try {
+      const res = await fetch(`/api/activity/${activityId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.ok) {
+        fetchActivities()
+      }
+    } catch (err) {
+      console.error('Failed to delete activity:', err)
+    }
+    setDeletingId(null)
+  }
 
   const addNote = async () => {
     if (!newNote.trim()) return
@@ -124,12 +140,38 @@ export default function ActivityTimeline({ leadId }) {
               return (
                 <div key={a.id || i} className="relative pl-10">
                   <div className="absolute left-2.5 top-2 w-3 h-3 rounded-full bg-gray-800 border-2 border-gray-500 z-10" />
-                  <div className={`rounded-lg border p-3 ${ACTION_COLORS[type] || ACTION_COLORS.system}`}>
+                  <div className={`rounded-lg border p-3 ${ACTION_COLORS[type] || ACTION_COLORS.system} group`}>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-200">
                         {ACTION_ICONS[type] || '⚙️'} {a.action}
                       </span>
-                      <span className="text-xs text-gray-500">{timeAgo(a.created_at)}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">{timeAgo(a.created_at)}</span>
+                        {deletingId === a.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => deleteActivity(a.id)}
+                              className="px-1.5 py-0.5 bg-red-600 text-white rounded text-xs hover:bg-red-700 transition"
+                            >
+                              Da
+                            </button>
+                            <button
+                              onClick={() => setDeletingId(null)}
+                              className="px-1.5 py-0.5 bg-gray-600 text-gray-300 rounded text-xs hover:bg-gray-500 transition"
+                            >
+                              Ne
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDeletingId(a.id)}
+                            className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs transition"
+                            title="Obrisi belešku"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {a.details && (
                       <div className="text-xs text-gray-300 leading-relaxed">{a.details}</div>

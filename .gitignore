@@ -5,15 +5,15 @@
 .env.production
 
 # Database files (contains real lead data!)
-data/*.db
-data/*.sqlite
+# data/*.db  -- temporarily included for deployment
+# data/*.sqlite
 
 # Node dependencies
 node_modules/
 client/node_modules/
 
 # Build artifacts
-client/dist/
+# client/dist/  -- temporarily included for deployment
 client/dist-ssr/
 
 # Claude Code
@@ -40,4 +40,4 @@ cookies.txt
 
 # Import scripts with real business data
 server/import*.js
-server/seed-users.js
+# server/seed-users.js  -- needed for deployment

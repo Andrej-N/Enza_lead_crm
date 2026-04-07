@@ -1,22 +1,37 @@
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const path = require('path');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const { getDb, saveDb } = require('./db');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-env-file';
+// Fail fast if JWT_SECRET is not set in production
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  console.error('FATAL: JWT_SECRET environment variable must be set (min 32 characters).');
+  console.error('Create a .env file or set it in your hosting platform.');
+  process.exit(1);
+}
 const JWT_EXPIRES = '7d';
 
 const app = express();
 
-// CORS — restrict in production, allow credentials for cookies
+// Security headers
+app.use(helmet());
+
+// CORS — only allow configured origin
+const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || true,
+  origin: CORS_ORIGIN,
   credentials: true
 }));
-app.use(express.json());
+
+// Limit request body size to 1MB
+app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
 // Serve static frontend
@@ -244,7 +259,8 @@ app.put('/api/leads/:id', async (req, res) => {
       'num_beds', 'relevance', 'project_name', 'area_sqm', 'num_apartments',
       'construction_phase', 'investor_size', 'investment_eur', 'opening_date',
       'outreach_status', 'call_date', 'meeting_date', 'meeting_notes', 'notes',
-      'subcategory', 'phone_verified', 'email_verified'
+      'subcategory', 'phone_verified', 'email_verified',
+      'deal_value', 'deal_description', 'deal_date'
     ];
 
     const sets = [];
@@ -307,6 +323,7 @@ app.post('/api/leads', async (req, res) => {
   try {
     const db = await getDb();
     const f = req.body;
+    const n = (v) => v === undefined ? null : v;
 
     db.run(`INSERT INTO leads (category, subcategory, name, city, address, website,
       phone1, phone2, email, email2, contact_person, stars, num_rooms, google_rating,
@@ -314,11 +331,11 @@ app.post('/api/leads', async (req, res) => {
       relevance, project_name, area_sqm, num_apartments, construction_phase, investor_size,
       investment_eur, opening_date, notes)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-      f.category, f.subcategory, f.name, f.city, f.address, f.website,
-      f.phone1, f.phone2, f.email, f.email2, f.contact_person, f.stars, f.num_rooms, f.google_rating,
-      f.clinic_type, f.has_stationary || 0, f.has_surgery || 0, f.has_maternity || 0, f.has_palliative || 0,
-      f.num_beds, f.relevance, f.project_name, f.area_sqm, f.num_apartments,
-      f.construction_phase, f.investor_size, f.investment_eur, f.opening_date, f.notes
+      n(f.category), n(f.subcategory), n(f.name), n(f.city), n(f.address), n(f.website),
+      n(f.phone1), n(f.phone2), n(f.email), n(f.email2), n(f.contact_person), n(f.stars), n(f.num_rooms), n(f.google_rating),
+      n(f.clinic_type), f.has_stationary || 0, f.has_surgery || 0, f.has_maternity || 0, f.has_palliative || 0,
+      n(f.num_beds), n(f.relevance), n(f.project_name), n(f.area_sqm), n(f.num_apartments),
+      n(f.construction_phase), n(f.investor_size), n(f.investment_eur), n(f.opening_date), n(f.notes)
     ]);
     saveDb();
 
@@ -326,6 +343,7 @@ app.post('/api/leads', async (req, res) => {
     const newId = result[0].values[0][0];
     res.json({ success: true, id: newId });
   } catch (err) {
+    console.error('POST /api/leads error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -396,6 +414,27 @@ app.post('/api/activity/:leadId', async (req, res) => {
     db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
       req.params.leadId, action || 'Beleska', details || '', action_type || 'note'
     ]);
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/activity/:activityId - delete a single activity entry
+app.delete('/api/activity/:activityId', async (req, res) => {
+  try {
+    const db = await getDb();
+    const activityId = parseInt(req.params.activityId, 10);
+    if (!Number.isFinite(activityId)) return res.status(400).json({ error: 'Invalid activity ID' });
+
+    // Verify the activity exists
+    const result = db.exec('SELECT id FROM activity_log WHERE id = ?', [activityId]);
+    if (!result.length || !result[0].values.length) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+
+    db.run('DELETE FROM activity_log WHERE id = ?', [activityId]);
     saveDb();
     res.json({ success: true });
   } catch (err) {

@@ -233,7 +233,6 @@ export default function LeadModal({ lead, onClose, onUpdate, onDelete }) {
               <EditableField label="Zvezdice" value={lead.stars} field="stars" onSave={onUpdate} />
               <EditableField label="Broj soba" value={lead.num_rooms} field="num_rooms" onSave={onUpdate} />
               <EditableField label="Google rejting" value={lead.google_rating} field="google_rating" onSave={onUpdate} />
-              <EditableField label="Status email-a" value={lead.email_status} field="email_status" onSave={onUpdate} />
             </div>
           )}
 
@@ -295,6 +294,21 @@ export default function LeadModal({ lead, onClose, onUpdate, onDelete }) {
             <EditableDateField label="Datum sastanka" value={lead.meeting_date} field="meeting_date" onSave={onUpdate} />
             <EditableTextArea label="Beleske sa sastanka" value={lead.meeting_notes} field="meeting_notes" onSave={onUpdate} />
           </div>
+
+          {/* Deal info - shown when negotiation or deal_closed */}
+          {(lead.outreach_status === 'negotiation' || lead.outreach_status === 'deal_closed') && (
+            <div className="bg-green-900/20 rounded-lg p-4 mb-6 border border-green-800/30">
+              <h3 className="text-sm font-semibold text-green-400 mb-3">
+                {lead.outreach_status === 'deal_closed' ? '✓ Dogovoren posao' : 'Detalji posla'}
+              </h3>
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Vrednost posla (EUR)</label>
+                <EditableField label="" value={lead.deal_value} field="deal_value" onSave={onUpdate} />
+              </div>
+              <EditableDateField label="Datum zaključenja" value={lead.deal_date} field="deal_date" onSave={onUpdate} />
+              <EditableTextArea label="Opis posla" value={lead.deal_description} field="deal_description" onSave={onUpdate} />
+            </div>
+          )}
 
           {/* Notes */}
           <EditableTextArea label="Opste beleske" value={lead.notes} field="notes" onSave={onUpdate} />
