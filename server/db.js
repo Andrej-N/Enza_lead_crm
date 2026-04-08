@@ -2,7 +2,9 @@ const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'enza_leads.db');
+// In production (Render), DB_PATH points to a mounted persistent disk
+// (e.g. /var/data/enza_leads.db). Locally it falls back to repo path.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'enza_leads.db');
 
 let db = null;
 
