@@ -134,6 +134,29 @@ function initSchema(db) {
     )
   `);
 
+  // Walk-in retail customers (B2C) — separate from leads (B2B pipeline)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS customers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      city TEXT,
+      address TEXT,
+      purchase_date TEXT,
+      products TEXT,
+      purchase_value TEXT,
+      notes TEXT,
+      marketing_consent INTEGER DEFAULT 0,
+      consent_date TEXT,
+      source TEXT DEFAULT 'store',
+      created_by INTEGER,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (created_by) REFERENCES users(id)
+    )
+  `);
+
   saveDb();
 }
 

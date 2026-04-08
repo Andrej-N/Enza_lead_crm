@@ -251,6 +251,14 @@ app.put('/api/leads/:id', async (req, res) => {
 
     console.log('PUT /api/leads/' + id, 'body:', JSON.stringify(fields));
 
+    // Fetch old record so we can log only real diffs
+    const oldResult = db.exec('SELECT * FROM leads WHERE id = ?', [id]);
+    if (!oldResult.length || !oldResult[0].values.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+    const oldLead = {};
+    oldResult[0].columns.forEach((col, i) => { oldLead[col] = oldResult[0].values[0][i]; });
+
     // Build SET clause from provided fields
     const allowedFields = [
       'name', 'city', 'address', 'website', 'phone1', 'phone2', 'email', 'email2',
@@ -294,22 +302,67 @@ app.put('/api/leads/:id', async (req, res) => {
     db.run(`UPDATE leads SET ${sets.join(', ')} WHERE id = ?`, params);
     saveDb();
 
-    // Log activity for various field changes
-    if (fields.outreach_status) {
+    // Helper to detect whether a field actually changed
+    const changed = (key) => fields[key] !== undefined && String(fields[key] ?? '') !== String(oldLead[key] ?? '');
+    const logActivity = (action, details, action_type) => {
       db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
-        id, 'status_change', `Status promenjen u: ${fields.outreach_status}`, 'system'
+        id, action, details, action_type
       ]);
+    };
+
+    // Status / dates
+    if (changed('outreach_status')) {
+      logActivity('status_change', `Status promenjen u: ${fields.outreach_status}`, 'status');
     }
-    if (fields.call_date) {
-      db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
-        id, 'call_logged', `Poziv zakazan: ${fields.call_date}`, 'call'
-      ]);
+    if (changed('call_date')) {
+      logActivity('call_logged', fields.call_date ? `Poziv zakazan: ${fields.call_date}` : 'Datum poziva uklonjen', 'call');
     }
-    if (fields.meeting_date) {
-      db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
-        id, 'meeting_scheduled', `Sastanak zakazan: ${fields.meeting_date}`, 'meeting'
-      ]);
+    if (changed('meeting_date')) {
+      logActivity('meeting_scheduled', fields.meeting_date ? `Sastanak zakazan: ${fields.meeting_date}` : 'Datum sastanka uklonjen', 'meeting');
     }
+
+    // Verifikacija
+    if (changed('phone_verified')) {
+      logActivity('verification', Number(fields.phone_verified) === 1 ? 'Telefon verifikovan' : 'Verifikacija telefona uklonjena', 'verification');
+    }
+    if (changed('email_verified')) {
+      logActivity('verification', Number(fields.email_verified) === 1 ? 'Email verifikovan' : 'Verifikacija email-a uklonjena', 'verification');
+    }
+
+    // Kontakt info
+    const contactFields = [
+      ['phone1', 'Telefon 1'],
+      ['phone2', 'Telefon 2'],
+      ['email', 'Email'],
+      ['email2', 'Email 2'],
+      ['contact_person', 'Kontakt osoba'],
+    ];
+    for (const [key, label] of contactFields) {
+      if (changed(key)) {
+        const val = fields[key];
+        logActivity('contact_update', val ? `${label} azuriran: ${val}` : `${label} obrisan`, 'contact');
+      }
+    }
+
+    // Beleske
+    if (changed('notes')) {
+      const preview = (fields.notes || '').slice(0, 120);
+      logActivity('notes_update', fields.notes ? `Glavna beleska azurirana: ${preview}${fields.notes.length > 120 ? '...' : ''}` : 'Glavna beleska obrisana', 'note');
+    }
+    if (changed('meeting_notes')) {
+      const preview = (fields.meeting_notes || '').slice(0, 120);
+      logActivity('notes_update', fields.meeting_notes ? `Beleska sastanka azurirana: ${preview}${fields.meeting_notes.length > 120 ? '...' : ''}` : 'Beleska sastanka obrisana', 'note');
+    }
+
+    // Deal info
+    if (changed('deal_value') || changed('deal_description') || changed('deal_date')) {
+      const parts = [];
+      if (fields.deal_value !== undefined) parts.push(`vrednost: ${fields.deal_value || '-'}`);
+      if (fields.deal_date !== undefined) parts.push(`datum: ${fields.deal_date || '-'}`);
+      if (fields.deal_description !== undefined) parts.push(`opis: ${(fields.deal_description || '').slice(0, 80)}`);
+      logActivity('deal_update', `Dogovor azuriran (${parts.join(', ')})`, 'deal');
+    }
+
     saveDb();
 
     res.json({ success: true });
@@ -383,6 +436,73 @@ app.get('/api/stats', async (req, res) => {
 
     res.json({ total, byCategory, byStatus });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/activity/daily?date=YYYY-MM-DD - all activity for one day, grouped by lead
+app.get('/api/activity/daily', async (req, res) => {
+  try {
+    const db = await getDb();
+    const date = req.query.date; // expected YYYY-MM-DD
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date param required (YYYY-MM-DD)' });
+    }
+
+    const result = db.exec(`
+      SELECT
+        a.id, a.lead_id, a.action, a.details, a.action_type, a.created_at,
+        l.name, l.city, l.category, l.subcategory, l.outreach_status, l.phone1, l.email
+      FROM activity_log a
+      JOIN leads l ON l.id = a.lead_id
+      WHERE date(a.created_at) = ?
+      ORDER BY a.created_at DESC
+    `, [date]);
+
+    if (!result.length) return res.json([]);
+
+    const columns = result[0].columns;
+    const rows = result[0].values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+
+    // Group by lead_id
+    const byLead = new Map();
+    for (const r of rows) {
+      if (!byLead.has(r.lead_id)) {
+        byLead.set(r.lead_id, {
+          lead: {
+            id: r.lead_id,
+            name: r.name,
+            city: r.city,
+            category: r.category,
+            subcategory: r.subcategory,
+            outreach_status: r.outreach_status,
+            phone1: r.phone1,
+            email: r.email,
+          },
+          activities: [],
+          lastActivityAt: r.created_at,
+        });
+      }
+      const entry = byLead.get(r.lead_id);
+      entry.activities.push({
+        id: r.id,
+        action: r.action,
+        details: r.details,
+        action_type: r.action_type,
+        created_at: r.created_at,
+      });
+      if (r.created_at > entry.lastActivityAt) entry.lastActivityAt = r.created_at;
+    }
+
+    // Sort groups by most recent activity
+    const grouped = Array.from(byLead.values()).sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+    res.json(grouped);
+  } catch (err) {
+    console.error('GET /api/activity/daily error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -654,6 +774,280 @@ app.get('/api/stats/weekly-report', async (req, res) => {
     const topCities = citiesResult.length ? citiesResult[0].values.map(([city, cnt]) => ({ city, cnt })) : [];
 
     res.json({ total, byCategory, byStatus, weekActivity, topCities });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// CUSTOMERS (B2C walk-in buyers) — separate from leads (B2B)
+// ============================================================
+// NOTE: /customers/stats and /customers/export.csv MUST be registered
+// BEFORE /customers/:id, otherwise Express matches :id first.
+
+// GET /api/customers/stats - dashboard stats for customers
+app.get('/api/customers/stats', async (req, res) => {
+  try {
+    const db = await getDb();
+
+    const totalR = db.exec('SELECT COUNT(*) FROM customers');
+    const total = totalR.length ? totalR[0].values[0][0] : 0;
+
+    const withEmailR = db.exec("SELECT COUNT(*) FROM customers WHERE email IS NOT NULL AND email != ''");
+    const withEmail = withEmailR.length ? withEmailR[0].values[0][0] : 0;
+
+    const withConsentR = db.exec("SELECT COUNT(*) FROM customers WHERE marketing_consent = 1 AND email IS NOT NULL AND email != ''");
+    const withConsent = withConsentR.length ? withConsentR[0].values[0][0] : 0;
+
+    const thisMonthR = db.exec("SELECT COUNT(*) FROM customers WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')");
+    const thisMonth = thisMonthR.length ? thisMonthR[0].values[0][0] : 0;
+
+    const byCityR = db.exec("SELECT city, COUNT(*) as cnt FROM customers WHERE city IS NOT NULL AND city != '' GROUP BY city ORDER BY cnt DESC LIMIT 10");
+    const byCity = byCityR.length ? byCityR[0].values.map(([city, cnt]) => ({ city, cnt })) : [];
+
+    res.json({ total, withEmail, withConsent, thisMonth, byCity });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/customers/export.csv - CSV export (for email tools)
+app.get('/api/customers/export.csv', async (req, res) => {
+  try {
+    const db = await getDb();
+    const { consent_only } = req.query;
+
+    let sql = 'SELECT id, name, phone, email, city, purchase_date, products, purchase_value, marketing_consent, consent_date, created_at FROM customers';
+    const params = [];
+    if (consent_only === '1') {
+      sql += " WHERE marketing_consent = 1 AND email IS NOT NULL AND email != ''";
+    }
+    sql += ' ORDER BY created_at DESC';
+
+    const result = db.exec(sql, params);
+    const rows = result.length ? result[0].values : [];
+    const columns = result.length ? result[0].columns : ['id','name','phone','email','city','purchase_date','products','purchase_value','marketing_consent','consent_date','created_at'];
+
+    // Proper CSV escaping: wrap in quotes, double internal quotes
+    const esc = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+
+    const lines = [columns.join(',')];
+    for (const row of rows) {
+      lines.push(row.map(esc).join(','));
+    }
+    const csv = '\ufeff' + lines.join('\r\n'); // BOM for Excel UTF-8
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="enza-kupci-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/customers - list with filters
+app.get('/api/customers', async (req, res) => {
+  try {
+    const db = await getDb();
+    const { search, city, has_email, has_consent, from_date, to_date } = req.query;
+
+    const where = ['1=1'];
+    const params = [];
+
+    if (search) {
+      where.push('(name LIKE ? OR phone LIKE ? OR email LIKE ? OR products LIKE ?)');
+      const s = `%${search}%`;
+      params.push(s, s, s, s);
+    }
+    if (city) {
+      where.push('city LIKE ?');
+      params.push(`%${city}%`);
+    }
+    if (has_email === '1') {
+      where.push("email IS NOT NULL AND email != ''");
+    } else if (has_email === '0') {
+      where.push("(email IS NULL OR email = '')");
+    }
+    if (has_consent === '1') {
+      where.push('marketing_consent = 1');
+    } else if (has_consent === '0') {
+      where.push('marketing_consent = 0');
+    }
+    if (from_date) {
+      where.push('purchase_date >= ?');
+      params.push(from_date);
+    }
+    if (to_date) {
+      where.push('purchase_date <= ?');
+      params.push(to_date);
+    }
+
+    const sql = `
+      SELECT c.*, u.display_name as created_by_name, u.username as created_by_username
+      FROM customers c
+      LEFT JOIN users u ON u.id = c.created_by
+      WHERE ${where.join(' AND ')}
+      ORDER BY c.created_at DESC
+    `;
+
+    const result = db.exec(sql, params);
+    if (!result.length) return res.json([]);
+
+    const columns = result[0].columns;
+    const rows = result[0].values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+    res.json(rows);
+  } catch (err) {
+    console.error('GET /api/customers error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/customers/:id
+app.get('/api/customers/:id', async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const result = db.exec(`
+      SELECT c.*, u.display_name as created_by_name, u.username as created_by_username
+      FROM customers c
+      LEFT JOIN users u ON u.id = c.created_by
+      WHERE c.id = ?
+    `, [id]);
+    if (!result.length || !result[0].values.length) return res.status(404).json({ error: 'Not found' });
+
+    const columns = result[0].columns;
+    const obj = {};
+    columns.forEach((col, i) => { obj[col] = result[0].values[0][i]; });
+    res.json(obj);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/customers - create
+app.post('/api/customers', async (req, res) => {
+  try {
+    const db = await getDb();
+    const f = req.body || {};
+
+    if (!f.name || typeof f.name !== 'string' || !f.name.trim()) {
+      return res.status(400).json({ error: 'Ime kupca je obavezno' });
+    }
+
+    const consent = Number(f.marketing_consent) === 1 ? 1 : 0;
+    // Auto-set consent_date when consent is given on create
+    const consentDate = consent === 1 ? (f.consent_date || new Date().toISOString().slice(0, 10)) : null;
+
+    const n = (v) => (v === undefined || v === '' ? null : v);
+
+    db.run(`
+      INSERT INTO customers (name, phone, email, city, address, purchase_date, products, purchase_value, notes, marketing_consent, consent_date, source, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      f.name.trim(),
+      n(f.phone),
+      n(f.email),
+      n(f.city),
+      n(f.address),
+      n(f.purchase_date),
+      n(f.products),
+      n(f.purchase_value),
+      n(f.notes),
+      consent,
+      consentDate,
+      n(f.source) || 'store',
+      req.user.id,
+    ]);
+    saveDb();
+
+    const idResult = db.exec('SELECT last_insert_rowid()');
+    const newId = idResult[0].values[0][0];
+    res.json({ success: true, id: newId });
+  } catch (err) {
+    console.error('POST /api/customers error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/customers/:id - update
+app.put('/api/customers/:id', async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const fields = req.body || {};
+
+    // Fetch existing row to compare consent toggle
+    const oldR = db.exec('SELECT * FROM customers WHERE id = ?', [id]);
+    if (!oldR.length || !oldR[0].values.length) return res.status(404).json({ error: 'Not found' });
+    const oldCustomer = {};
+    oldR[0].columns.forEach((col, i) => { oldCustomer[col] = oldR[0].values[0][i]; });
+
+    const allowedFields = [
+      'name', 'phone', 'email', 'city', 'address',
+      'purchase_date', 'products', 'purchase_value', 'notes',
+      'marketing_consent', 'source'
+    ];
+
+    const sets = [];
+    const params = [];
+    for (const [key, value] of Object.entries(fields)) {
+      if (allowedFields.includes(key)) {
+        sets.push(`${key} = ?`);
+        params.push(value === '' ? null : value);
+      }
+    }
+
+    // Handle consent_date automatically based on consent toggle
+    if (fields.marketing_consent !== undefined) {
+      const newConsent = Number(fields.marketing_consent) === 1 ? 1 : 0;
+      const oldConsent = Number(oldCustomer.marketing_consent) === 1 ? 1 : 0;
+      if (newConsent === 1 && oldConsent === 0) {
+        // First time giving consent → stamp today
+        sets.push('consent_date = ?');
+        params.push(new Date().toISOString().slice(0, 10));
+      } else if (newConsent === 0 && oldConsent === 1) {
+        // Consent withdrawn → clear date
+        sets.push('consent_date = NULL');
+      }
+    }
+
+    if (sets.length === 0) return res.status(400).json({ error: 'No valid fields' });
+
+    sets.push("updated_at = datetime('now')");
+    params.push(id);
+
+    db.run(`UPDATE customers SET ${sets.join(', ')} WHERE id = ?`, params);
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    console.error('PUT /api/customers/:id error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/customers/:id
+app.delete('/api/customers/:id', async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    db.run('DELETE FROM customers WHERE id = ?', [id]);
+    saveDb();
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
