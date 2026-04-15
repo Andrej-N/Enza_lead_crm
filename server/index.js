@@ -54,18 +54,63 @@ function loginRateLimit(req, res, next) {
 }
 
 // --- Auth middleware ---
-function authRequired(req, res, next) {
+async function authRequired(req, res, next) {
   const token = req.cookies.token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Niste prijavljeni' });
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch (err) {
     res.clearCookie('token');
     return res.status(401).json({ error: 'Sesija je istekla, prijavite se ponovo' });
   }
+
+  req.user = decoded;
+
+  // Backfill role from DB for old tokens issued before role was added to JWT
+  if (!req.user.role) {
+    try {
+      const db = await getDb();
+      const r = db.exec('SELECT role, active FROM users WHERE id = ?', [decoded.id]);
+      if (r.length && r[0].values.length) {
+        const [role, active] = r[0].values[0];
+        if (Number(active) === 0) {
+          res.clearCookie('token');
+          return res.status(403).json({ error: 'Nalog je deaktiviran' });
+        }
+        req.user.role = role || 'user';
+      } else {
+        req.user.role = 'user';
+      }
+    } catch (err) {
+      req.user.role = 'user';
+    }
+  }
+
+  next();
+}
+
+// --- Admin-only middleware (must come after authRequired) ---
+async function requireAdmin(req, res, next) {
+  if (req.user && req.user.role === 'admin') return next();
+
+  // Self-healing: JWT might be stale (issued before role was added or after a role change).
+  // Re-check the DB before rejecting.
+  try {
+    if (req.user && req.user.id) {
+      const db = await getDb();
+      const r = db.exec('SELECT role FROM users WHERE id = ?', [req.user.id]);
+      if (r.length && r[0].values.length && r[0].values[0][0] === 'admin') {
+        req.user.role = 'admin';
+        return next();
+      }
+    }
+  } catch (err) {
+    console.error('requireAdmin DB check failed:', err);
+  }
+
+  return res.status(403).json({ error: 'Samo admin moze ovo da uradi' });
 }
 
 // --- Auth endpoints (public) ---
@@ -77,7 +122,7 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username i password su obavezni' });
 
-    const result = db.exec('SELECT id, username, password_hash, display_name FROM users WHERE username = ?', [username]);
+    const result = db.exec('SELECT id, username, password_hash, display_name, role, active FROM users WHERE username = ?', [username]);
     if (!result.length || !result[0].values.length) {
       // Track failed attempt
       const ip = req.ip;
@@ -86,7 +131,12 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
       return res.status(401).json({ error: 'Pogresan username ili password' });
     }
 
-    const [id, uname, hash, displayName] = result[0].values[0];
+    const [id, uname, hash, displayName, role, active] = result[0].values[0];
+
+    if (Number(active) === 0) {
+      return res.status(403).json({ error: 'Nalog je deaktiviran. Kontaktirajte administratora.' });
+    }
+
     const valid = bcrypt.compareSync(password, hash);
     if (!valid) {
       const ip = req.ip;
@@ -95,7 +145,8 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
       return res.status(401).json({ error: 'Pogresan username ili password' });
     }
 
-    const token = jwt.sign({ id, username: uname, displayName }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    const userRole = role || 'user';
+    const token = jwt.sign({ id, username: uname, displayName, role: userRole }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 
     res.cookie('token', token, {
       httpOnly: true,
@@ -104,7 +155,7 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     });
 
-    res.json({ success: true, user: { id, username: uname, displayName } });
+    res.json({ success: true, user: { id, username: uname, displayName, role: userRole } });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -117,16 +168,58 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // GET /api/auth/me - check current session
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   const token = req.cookies.token || req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Not authenticated' });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    res.json({ user: { id: decoded.id, username: decoded.username, displayName: decoded.displayName } });
+    // Re-fetch role/active from DB so role changes take effect without re-login
+    const db = await getDb();
+    const result = db.exec('SELECT role, active, display_name FROM users WHERE id = ?', [decoded.id]);
+    if (!result.length || !result[0].values.length) {
+      res.clearCookie('token');
+      return res.status(401).json({ error: 'User not found' });
+    }
+    const [role, active, displayName] = result[0].values[0];
+    if (Number(active) === 0) {
+      res.clearCookie('token');
+      return res.status(403).json({ error: 'Nalog je deaktiviran' });
+    }
+    res.json({ user: { id: decoded.id, username: decoded.username, displayName: displayName || decoded.displayName, role: role || 'user' } });
   } catch (err) {
     res.clearCookie('token');
     res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+// POST /api/auth/change-password - user changes their own password
+app.post('/api/auth/change-password', authRequired, async (req, res) => {
+  try {
+    const db = await getDb();
+    const { current_password, new_password } = req.body || {};
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Trenutna i nova sifra su obavezne' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'Nova sifra mora imati najmanje 8 karaktera' });
+    }
+
+    const result = db.exec('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
+    if (!result.length || !result[0].values.length) {
+      return res.status(404).json({ error: 'Korisnik nije pronadjen' });
+    }
+    const hash = result[0].values[0][0];
+    if (!bcrypt.compareSync(current_password, hash)) {
+      return res.status(401).json({ error: 'Trenutna sifra nije ispravna' });
+    }
+
+    const newHash = bcrypt.hashSync(new_password, 10);
+    db.run('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, req.user.id]);
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -141,10 +234,26 @@ app.use('/api', (req, res, next) => {
 app.get('/api/leads', async (req, res) => {
   try {
     const db = await getDb();
-    const { category, subcategory, outreach_status, search, investor_size, construction_phase, city, has_phone, has_email, verified } = req.query;
+    const { category, subcategory, outreach_status, search, investor_size, construction_phase, city, has_phone, has_email, verified, assigned_to, mine } = req.query;
 
     let where = ['1=1'];
     let params = [];
+
+    // Permission / scope filter:
+    //  - Everyone (admin and user) can see all leads by default
+    //  - ?mine=1 narrows to leads assigned to current user
+    //  - admin can filter by assigned_to=<userId> or 'unassigned'
+    if (mine === '1') {
+      where.push('assigned_to = ?');
+      params.push(req.user.id);
+    } else if (req.user.role === 'admin') {
+      if (assigned_to === 'unassigned') {
+        where.push('assigned_to IS NULL');
+      } else if (assigned_to) {
+        where.push('assigned_to = ?');
+        params.push(parseInt(assigned_to, 10));
+      }
+    }
 
     if (category) {
       where.push('category = ?');
@@ -200,15 +309,38 @@ app.get('/api/leads', async (req, res) => {
       params.push(s, s, s, s, s);
     }
 
-    const sql = `SELECT * FROM leads WHERE ${where.join(' AND ')} ORDER BY
-      CASE outreach_status
+    // Rewrite WHERE clause to use 'l.' prefix since we're joining
+    const whereWithPrefix = where.map(w => {
+      // Only prefix bare column names (skip already-prefixed and complex expressions)
+      return w
+        .replace(/\bassigned_to\b/g, 'l.assigned_to')
+        .replace(/\bcategory\b/g, 'l.category')
+        .replace(/\bsubcategory\b/g, 'l.subcategory')
+        .replace(/\boutreach_status\b/g, 'l.outreach_status')
+        .replace(/\binvestor_size\b/g, 'l.investor_size')
+        .replace(/\bconstruction_phase\b/g, 'l.construction_phase')
+        .replace(/\bcity\b/g, 'l.city')
+        .replace(/\bphone1\b/g, 'l.phone1')
+        .replace(/\bphone_verified\b/g, 'l.phone_verified')
+        .replace(/\bemail_verified\b/g, 'l.email_verified')
+        .replace(/\bemail\b(?!\d)/g, 'l.email')
+        .replace(/\bname\b/g, 'l.name')
+        .replace(/\bproject_name\b/g, 'l.project_name')
+        .replace(/\bcontact_person\b/g, 'l.contact_person');
+    });
+
+    const sql = `SELECT l.*, u.display_name as assigned_to_name, u.username as assigned_to_username
+      FROM leads l
+      LEFT JOIN users u ON u.id = l.assigned_to
+      WHERE ${whereWithPrefix.join(' AND ')} ORDER BY
+      CASE l.outreach_status
         WHEN 'meeting_scheduled' THEN 1
         WHEN 'negotiation' THEN 2
         WHEN 'called' THEN 3
         WHEN 'not_contacted' THEN 4
         WHEN 'deal_closed' THEN 5
         WHEN 'not_interested' THEN 6
-      END, name ASC`;
+      END, l.name ASC`;
 
     const result = db.exec(sql, params);
     if (!result.length) return res.json([]);
@@ -230,12 +362,19 @@ app.get('/api/leads', async (req, res) => {
 app.get('/api/leads/:id', async (req, res) => {
   try {
     const db = await getDb();
-    const result = db.exec('SELECT * FROM leads WHERE id = ?', [req.params.id]);
+    const result = db.exec(`
+      SELECT l.*, u.display_name as assigned_to_name, u.username as assigned_to_username
+      FROM leads l
+      LEFT JOIN users u ON u.id = l.assigned_to
+      WHERE l.id = ?
+    `, [req.params.id]);
     if (!result.length || !result[0].values.length) return res.status(404).json({ error: 'Not found' });
 
     const columns = result[0].columns;
     const obj = {};
     columns.forEach((col, i) => { obj[col] = result[0].values[0][i]; });
+
+    // Everyone can VIEW any lead — edit permission is enforced separately on PUT
     res.json(obj);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -258,6 +397,11 @@ app.put('/api/leads/:id', async (req, res) => {
     }
     const oldLead = {};
     oldResult[0].columns.forEach((col, i) => { oldLead[col] = oldResult[0].values[0][i]; });
+
+    // Permission: non-admins can only edit leads assigned to them
+    if (req.user.role !== 'admin' && oldLead.assigned_to !== req.user.id) {
+      return res.status(403).json({ error: 'Nemate dozvolu da menjate ovaj lead' });
+    }
 
     // Build SET clause from provided fields
     const allowedFields = [
@@ -305,8 +449,8 @@ app.put('/api/leads/:id', async (req, res) => {
     // Helper to detect whether a field actually changed
     const changed = (key) => fields[key] !== undefined && String(fields[key] ?? '') !== String(oldLead[key] ?? '');
     const logActivity = (action, details, action_type) => {
-      db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
-        id, action, details, action_type
+      db.run('INSERT INTO activity_log (lead_id, action, details, action_type, user_id) VALUES (?, ?, ?, ?, ?)', [
+        id, action, details, action_type, req.user.id
       ]);
     };
 
@@ -371,29 +515,53 @@ app.put('/api/leads/:id', async (req, res) => {
   }
 });
 
-// POST /api/leads - create new lead
+// POST /api/leads - create new lead (any user; auto-assigns to creator unless admin specifies)
 app.post('/api/leads', async (req, res) => {
   try {
     const db = await getDb();
     const f = req.body;
     const n = (v) => v === undefined ? null : v;
 
+    // Non-admins always create leads assigned to themselves.
+    // Admins may specify assigned_to in body, otherwise unassigned by default.
+    let assignedTo;
+    let assignedBy = null;
+    let assignedAt = null;
+    if (req.user.role === 'admin') {
+      assignedTo = f.assigned_to !== undefined ? (f.assigned_to || null) : null;
+      if (assignedTo) {
+        assignedBy = req.user.id;
+        assignedAt = new Date().toISOString();
+      }
+    } else {
+      assignedTo = req.user.id;
+      assignedBy = req.user.id;
+      assignedAt = new Date().toISOString();
+    }
+
     db.run(`INSERT INTO leads (category, subcategory, name, city, address, website,
       phone1, phone2, email, email2, contact_person, stars, num_rooms, google_rating,
       clinic_type, has_stationary, has_surgery, has_maternity, has_palliative, num_beds,
       relevance, project_name, area_sqm, num_apartments, construction_phase, investor_size,
-      investment_eur, opening_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      investment_eur, opening_date, notes, assigned_to, assigned_at, assigned_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       n(f.category), n(f.subcategory), n(f.name), n(f.city), n(f.address), n(f.website),
       n(f.phone1), n(f.phone2), n(f.email), n(f.email2), n(f.contact_person), n(f.stars), n(f.num_rooms), n(f.google_rating),
       n(f.clinic_type), f.has_stationary || 0, f.has_surgery || 0, f.has_maternity || 0, f.has_palliative || 0,
       n(f.num_beds), n(f.relevance), n(f.project_name), n(f.area_sqm), n(f.num_apartments),
-      n(f.construction_phase), n(f.investor_size), n(f.investment_eur), n(f.opening_date), n(f.notes)
+      n(f.construction_phase), n(f.investor_size), n(f.investment_eur), n(f.opening_date), n(f.notes),
+      assignedTo, assignedAt, assignedBy
     ]);
-    saveDb();
 
     const result = db.exec('SELECT last_insert_rowid()');
     const newId = result[0].values[0][0];
+
+    // Log creation in activity log
+    db.run('INSERT INTO activity_log (lead_id, action, details, action_type, user_id) VALUES (?, ?, ?, ?, ?)', [
+      newId, 'lead_created', `Lead kreiran: ${f.name || ''}`, 'system', req.user.id
+    ]);
+    saveDb();
+
     res.json({ success: true, id: newId });
   } catch (err) {
     console.error('POST /api/leads error:', err.message);
@@ -401,8 +569,8 @@ app.post('/api/leads', async (req, res) => {
   }
 });
 
-// DELETE /api/leads/:id
-app.delete('/api/leads/:id', async (req, res) => {
+// DELETE /api/leads/:id - admin only
+app.delete('/api/leads/:id', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     db.run('DELETE FROM activity_log WHERE lead_id = ?', [req.params.id]);
@@ -415,7 +583,7 @@ app.delete('/api/leads/:id', async (req, res) => {
 });
 
 // GET /api/stats - dashboard statistics
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
 
@@ -441,7 +609,7 @@ app.get('/api/stats', async (req, res) => {
 });
 
 // GET /api/activity/daily?date=YYYY-MM-DD - all activity for one day, grouped by lead
-app.get('/api/activity/daily', async (req, res) => {
+app.get('/api/activity/daily', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     const date = req.query.date; // expected YYYY-MM-DD
@@ -511,7 +679,25 @@ app.get('/api/activity/daily', async (req, res) => {
 app.get('/api/activity/:leadId', async (req, res) => {
   try {
     const db = await getDb();
-    const result = db.exec('SELECT * FROM activity_log WHERE lead_id = ? ORDER BY created_at DESC', [req.params.leadId]);
+
+    // Permission: non-admins can only see activity for their own leads
+    if (req.user.role !== 'admin') {
+      const ownerR = db.exec('SELECT assigned_to FROM leads WHERE id = ?', [req.params.leadId]);
+      if (!ownerR.length || !ownerR[0].values.length) {
+        return res.status(404).json({ error: 'Lead nije pronadjen' });
+      }
+      if (ownerR[0].values[0][0] !== req.user.id) {
+        return res.status(403).json({ error: 'Nemate dozvolu za ovaj lead' });
+      }
+    }
+
+    const result = db.exec(`
+      SELECT a.*, u.display_name as user_name, u.username as user_username
+      FROM activity_log a
+      LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.lead_id = ?
+      ORDER BY a.created_at DESC
+    `, [req.params.leadId]);
     if (!result.length) return res.json([]);
 
     const columns = result[0].columns;
@@ -531,8 +717,20 @@ app.post('/api/activity/:leadId', async (req, res) => {
   try {
     const db = await getDb();
     const { action, details, action_type } = req.body;
-    db.run('INSERT INTO activity_log (lead_id, action, details, action_type) VALUES (?, ?, ?, ?)', [
-      req.params.leadId, action || 'Beleska', details || '', action_type || 'note'
+
+    // Permission: non-admins can only post activity for leads assigned to them
+    if (req.user.role !== 'admin') {
+      const ownerR = db.exec('SELECT assigned_to FROM leads WHERE id = ?', [req.params.leadId]);
+      if (!ownerR.length || !ownerR[0].values.length) {
+        return res.status(404).json({ error: 'Lead nije pronadjen' });
+      }
+      if (ownerR[0].values[0][0] !== req.user.id) {
+        return res.status(403).json({ error: 'Nemate dozvolu za ovaj lead' });
+      }
+    }
+
+    db.run('INSERT INTO activity_log (lead_id, action, details, action_type, user_id) VALUES (?, ?, ?, ?, ?)', [
+      req.params.leadId, action || 'Beleska', details || '', action_type || 'note', req.user.id
     ]);
     saveDb();
     res.json({ success: true });
@@ -562,8 +760,472 @@ app.delete('/api/activity/:activityId', async (req, res) => {
   }
 });
 
+// ============================================================
+// === USERS MANAGEMENT (admin) ===
+// ============================================================
+
+// GET /api/users - list all users with stats
+app.get('/api/users', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const result = db.exec(`
+      SELECT
+        u.id,
+        u.username,
+        u.display_name,
+        u.role,
+        u.active,
+        u.created_at,
+        u.created_by,
+        (SELECT COUNT(*) FROM leads WHERE assigned_to = u.id) as assigned_count,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'call' AND date(created_at) = date('now')) as calls_today,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'call' AND created_at >= date('now', '-7 days')) as calls_week,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'meeting' AND created_at >= date('now', '-7 days')) as meetings_week,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'deal' AND created_at >= date('now', '-7 days')) as deals_week
+      FROM users u
+      ORDER BY u.active DESC, u.username ASC
+    `);
+
+    if (!result.length) return res.json([]);
+    const columns = result[0].columns;
+    const rows = result[0].values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/users - create user
+app.post('/api/users', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const { username, password, display_name, role } = req.body || {};
+
+    if (!username || typeof username !== 'string' || username.length < 3 || username.length > 32) {
+      return res.status(400).json({ error: 'Username mora imati 3-32 karaktera' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Sifra mora imati najmanje 8 karaktera' });
+    }
+    const userRole = role || 'user';
+    if (!['admin', 'user'].includes(userRole)) {
+      return res.status(400).json({ error: 'Neispravna uloga' });
+    }
+
+    // Check if username exists
+    const existing = db.exec('SELECT id FROM users WHERE username = ?', [username]);
+    if (existing.length && existing[0].values.length) {
+      return res.status(409).json({ error: 'Korisnik vec postoji' });
+    }
+
+    const hash = bcrypt.hashSync(password, 10);
+    db.run(
+      'INSERT INTO users (username, password_hash, display_name, role, active, created_by) VALUES (?, ?, ?, ?, 1, ?)',
+      [username, hash, display_name || username, userRole, req.user.id]
+    );
+
+    const idResult = db.exec('SELECT last_insert_rowid()');
+    const newId = idResult[0].values[0][0];
+    saveDb();
+    res.json({ success: true, id: newId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/users/:id - update display_name, role, active
+app.put('/api/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Neispravan ID' });
+
+    const { display_name, role, active } = req.body || {};
+
+    // Safety checks for self
+    if (id === req.user.id) {
+      if (role !== undefined && role !== 'admin') {
+        return res.status(403).json({ error: 'Ne mozete sebi oduzeti admin status' });
+      }
+      if (active !== undefined && Number(active) === 0) {
+        return res.status(403).json({ error: 'Ne mozete deaktivirati svoj nalog' });
+      }
+    }
+
+    if (role !== undefined && !['admin', 'user'].includes(role)) {
+      return res.status(400).json({ error: 'Neispravna uloga' });
+    }
+
+    // Verify user exists
+    const existing = db.exec('SELECT id FROM users WHERE id = ?', [id]);
+    if (!existing.length || !existing[0].values.length) {
+      return res.status(404).json({ error: 'Korisnik nije pronadjen' });
+    }
+
+    const sets = [];
+    const params = [];
+    if (display_name !== undefined) {
+      sets.push('display_name = ?');
+      params.push(display_name);
+    }
+    if (role !== undefined) {
+      sets.push('role = ?');
+      params.push(role);
+    }
+    if (active !== undefined) {
+      sets.push('active = ?');
+      params.push(Number(active) === 1 ? 1 : 0);
+    }
+
+    if (sets.length === 0) {
+      return res.status(400).json({ error: 'Nema polja za azuriranje' });
+    }
+
+    params.push(id);
+    db.run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, params);
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/users/:id/reset-password - admin resets another user's password
+app.post('/api/users/:id/reset-password', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Neispravan ID' });
+
+    const { new_password } = req.body || {};
+    if (!new_password || typeof new_password !== 'string' || new_password.length < 8) {
+      return res.status(400).json({ error: 'Sifra mora imati najmanje 8 karaktera' });
+    }
+
+    const existing = db.exec('SELECT id FROM users WHERE id = ?', [id]);
+    if (!existing.length || !existing[0].values.length) {
+      return res.status(404).json({ error: 'Korisnik nije pronadjen' });
+    }
+
+    const hash = bcrypt.hashSync(new_password, 10);
+    db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, id]);
+    saveDb();
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/users/:id - soft delete (set active=0) AND unassign their leads
+app.delete('/api/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Neispravan ID' });
+
+    if (id === req.user.id) {
+      return res.status(403).json({ error: 'Ne mozete obrisati svoj nalog' });
+    }
+
+    const existing = db.exec('SELECT id FROM users WHERE id = ?', [id]);
+    if (!existing.length || !existing[0].values.length) {
+      return res.status(404).json({ error: 'Korisnik nije pronadjen' });
+    }
+
+    // Count leads currently assigned to this user before unassign
+    const countR = db.exec('SELECT COUNT(*) FROM leads WHERE assigned_to = ?', [id]);
+    const unassignedCount = countR.length ? countR[0].values[0][0] : 0;
+
+    db.run('UPDATE users SET active = 0 WHERE id = ?', [id]);
+    db.run('UPDATE leads SET assigned_to = NULL, assigned_at = NULL, assigned_by = NULL WHERE assigned_to = ?', [id]);
+    saveDb();
+
+    res.json({ success: true, unassigned_leads: unassignedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// === MY NOTIFICATIONS (any logged-in user) ===
+// ============================================================
+
+// GET /api/my/notifications
+// Returns counts/info about leads that were assigned to the current user
+// after they last opened the "Dodeljeni leadovi" view.
+app.get('/api/my/notifications', async (req, res) => {
+  try {
+    const db = await getDb();
+
+    // Get user's last_assignments_viewed_at
+    const uR = db.exec('SELECT last_assignments_viewed_at FROM users WHERE id = ?', [req.user.id]);
+    const lastSeen = (uR.length && uR[0].values.length) ? uR[0].values[0][0] : null;
+
+    // Total leads assigned to me
+    const totalR = db.exec('SELECT COUNT(*) FROM leads WHERE assigned_to = ?', [req.user.id]);
+    const total = (totalR.length && totalR[0].values.length) ? Number(totalR[0].values[0][0]) : 0;
+
+    // New = assigned_at > lastSeen (or all of them if user never opened the view)
+    let newCount = 0;
+    let newLeads = [];
+    if (lastSeen) {
+      const r = db.exec(
+        `SELECT id, name, category, assigned_at
+         FROM leads
+         WHERE assigned_to = ? AND assigned_at IS NOT NULL AND assigned_at > ?
+         ORDER BY assigned_at DESC LIMIT 20`,
+        [req.user.id, lastSeen]
+      );
+      if (r.length && r[0].values.length) {
+        newCount = r[0].values.length;
+        newLeads = r[0].values.map(row => ({
+          id: row[0], name: row[1], category: row[2], assigned_at: row[3],
+        }));
+      }
+    } else {
+      // Never seen before — all assigned leads count as "new"
+      const r = db.exec(
+        `SELECT id, name, category, assigned_at
+         FROM leads
+         WHERE assigned_to = ? AND assigned_at IS NOT NULL
+         ORDER BY assigned_at DESC LIMIT 20`,
+        [req.user.id]
+      );
+      if (r.length && r[0].values.length) {
+        newCount = r[0].values.length;
+        newLeads = r[0].values.map(row => ({
+          id: row[0], name: row[1], category: row[2], assigned_at: row[3],
+        }));
+      }
+    }
+
+    res.json({ total, newCount, newLeads, lastSeen });
+  } catch (err) {
+    console.error('GET /api/my/notifications error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/my/notifications/seen
+// Marks the current moment as the user's "last viewed assignments" timestamp.
+app.post('/api/my/notifications/seen', async (req, res) => {
+  try {
+    const db = await getDb();
+    const nowIso = new Date().toISOString();
+    db.run('UPDATE users SET last_assignments_viewed_at = ? WHERE id = ?', [nowIso, req.user.id]);
+    saveDb();
+    res.json({ success: true, lastSeen: nowIso });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// === LEAD ASSIGNMENT (admin) ===
+// ============================================================
+
+// POST /api/leads/assign - bulk assign
+app.post('/api/leads/assign', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const { lead_ids, user_id } = req.body || {};
+
+    if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
+      return res.status(400).json({ error: 'lead_ids mora biti niz' });
+    }
+
+    let targetUserId = null;
+    let targetDisplayName = null;
+    if (user_id !== null && user_id !== undefined) {
+      const uid = parseInt(user_id, 10);
+      if (!Number.isFinite(uid)) return res.status(400).json({ error: 'Neispravan user_id' });
+      const userR = db.exec('SELECT id, display_name, active FROM users WHERE id = ?', [uid]);
+      if (!userR.length || !userR[0].values.length) {
+        return res.status(404).json({ error: 'Korisnik nije pronadjen' });
+      }
+      const [, dispName, activeFlag] = userR[0].values[0];
+      if (Number(activeFlag) !== 1) {
+        return res.status(400).json({ error: 'Korisnik nije aktivan' });
+      }
+      targetUserId = uid;
+      targetDisplayName = dispName;
+    }
+
+    let assignedCount = 0;
+    const nowIso = new Date().toISOString();
+    for (const rawId of lead_ids) {
+      const lid = parseInt(rawId, 10);
+      if (!Number.isFinite(lid)) continue;
+
+      // Verify lead exists
+      const leadR = db.exec('SELECT id FROM leads WHERE id = ?', [lid]);
+      if (!leadR.length || !leadR[0].values.length) continue;
+
+      if (targetUserId === null) {
+        db.run('UPDATE leads SET assigned_to = NULL, assigned_at = NULL, assigned_by = NULL WHERE id = ?', [lid]);
+      } else {
+        db.run('UPDATE leads SET assigned_to = ?, assigned_at = ?, assigned_by = ? WHERE id = ?', [
+          targetUserId, nowIso, req.user.id, lid
+        ]);
+      }
+
+      const details = targetUserId === null
+        ? 'Uklonjena dodela'
+        : `Dodeljen useru: ${targetDisplayName || ''}`;
+      db.run('INSERT INTO activity_log (lead_id, action, details, action_type, user_id) VALUES (?, ?, ?, ?, ?)', [
+        lid, 'assignment', details, 'system', req.user.id
+      ]);
+      assignedCount++;
+    }
+
+    saveDb();
+    res.json({ success: true, assigned: assignedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// === EMPLOYEE PERFORMANCE & ACTIVITY (admin) ===
+// ============================================================
+
+// GET /api/admin/employee-performance?from=YYYY-MM-DD&to=YYYY-MM-DD
+app.get('/api/admin/employee-performance', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const fromDefault = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const toDefault = new Date().toISOString().slice(0, 10);
+    const from = req.query.from && /^\d{4}-\d{2}-\d{2}$/.test(req.query.from) ? req.query.from : fromDefault;
+    const to = req.query.to && /^\d{4}-\d{2}-\d{2}$/.test(req.query.to) ? req.query.to : toDefault;
+
+    const result = db.exec(`
+      SELECT
+        u.id as user_id,
+        u.username,
+        u.display_name,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'call' AND date(created_at) BETWEEN ? AND ?) as calls,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'meeting' AND date(created_at) BETWEEN ? AND ?) as meetings,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'note' AND date(created_at) BETWEEN ? AND ?) as notes,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'status' AND date(created_at) BETWEEN ? AND ?) as status_changes,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND action_type = 'deal' AND date(created_at) BETWEEN ? AND ?) as deals,
+        (SELECT COUNT(*) FROM activity_log WHERE user_id = u.id AND date(created_at) BETWEEN ? AND ?) as total_actions,
+        (SELECT COUNT(DISTINCT lead_id) FROM activity_log WHERE user_id = u.id AND date(created_at) BETWEEN ? AND ?) as leads_touched
+      FROM users u
+      WHERE u.active = 1
+      ORDER BY u.username ASC
+    `, [from, to, from, to, from, to, from, to, from, to, from, to, from, to]);
+
+    if (!result.length) return res.json([]);
+    const columns = result[0].columns;
+    const rows = result[0].values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/employee-activity?user_id=X&date=YYYY-MM-DD
+app.get('/api/admin/employee-activity', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const date = req.query.date;
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date param required (YYYY-MM-DD)' });
+    }
+
+    let sql;
+    let params;
+    if (req.query.user_id) {
+      const uid = parseInt(req.query.user_id, 10);
+      if (!Number.isFinite(uid)) return res.status(400).json({ error: 'Neispravan user_id' });
+      sql = `
+        SELECT
+          a.id, a.lead_id, a.action, a.details, a.action_type, a.created_at, a.user_id,
+          l.name, l.city, l.category, l.subcategory, l.outreach_status, l.phone1, l.email,
+          u.display_name as user_name, u.username as user_username
+        FROM activity_log a
+        JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE date(a.created_at) = ? AND a.user_id = ?
+        ORDER BY a.created_at DESC
+      `;
+      params = [date, uid];
+    } else {
+      sql = `
+        SELECT
+          a.id, a.lead_id, a.action, a.details, a.action_type, a.created_at, a.user_id,
+          l.name, l.city, l.category, l.subcategory, l.outreach_status, l.phone1, l.email,
+          u.display_name as user_name, u.username as user_username
+        FROM activity_log a
+        JOIN leads l ON l.id = a.lead_id
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE date(a.created_at) = ?
+        ORDER BY a.created_at DESC
+      `;
+      params = [date];
+    }
+
+    const result = db.exec(sql, params);
+    if (!result.length) return res.json([]);
+
+    const columns = result[0].columns;
+    const rows = result[0].values.map(row => {
+      const obj = {};
+      columns.forEach((col, i) => { obj[col] = row[i]; });
+      return obj;
+    });
+
+    // Group by lead_id (mirrors /api/activity/daily)
+    const byLead = new Map();
+    for (const r of rows) {
+      if (!byLead.has(r.lead_id)) {
+        byLead.set(r.lead_id, {
+          lead: {
+            id: r.lead_id,
+            name: r.name,
+            city: r.city,
+            category: r.category,
+            subcategory: r.subcategory,
+            outreach_status: r.outreach_status,
+            phone1: r.phone1,
+            email: r.email,
+          },
+          activities: [],
+          lastActivityAt: r.created_at,
+        });
+      }
+      const entry = byLead.get(r.lead_id);
+      entry.activities.push({
+        id: r.id,
+        action: r.action,
+        details: r.details,
+        action_type: r.action_type,
+        created_at: r.created_at,
+        user_id: r.user_id,
+        user_name: r.user_name,
+        user_username: r.user_username,
+      });
+      if (r.created_at > entry.lastActivityAt) entry.lastActivityAt = r.created_at;
+    }
+
+    const grouped = Array.from(byLead.values()).sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
+    res.json(grouped);
+  } catch (err) {
+    console.error('GET /api/admin/employee-activity error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/stats/pipeline - funnel data
-app.get('/api/stats/pipeline', async (req, res) => {
+app.get('/api/stats/pipeline', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     const result = db.exec(`SELECT outreach_status, category, COUNT(*) as cnt FROM leads GROUP BY outreach_status, category`);
@@ -576,7 +1238,7 @@ app.get('/api/stats/pipeline', async (req, res) => {
 });
 
 // GET /api/stats/cities - top cities
-app.get('/api/stats/cities', async (req, res) => {
+app.get('/api/stats/cities', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     const result = db.exec(`SELECT city, COUNT(*) as cnt FROM leads WHERE city IS NOT NULL AND city != '' GROUP BY city ORDER BY cnt DESC LIMIT 10`);
@@ -589,7 +1251,7 @@ app.get('/api/stats/cities', async (req, res) => {
 });
 
 // GET /api/stats/conversion - conversion by category
-app.get('/api/stats/conversion', async (req, res) => {
+app.get('/api/stats/conversion', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     const result = db.exec(`SELECT category, outreach_status, COUNT(*) as cnt FROM leads GROUP BY category, outreach_status`);
@@ -602,7 +1264,7 @@ app.get('/api/stats/conversion', async (req, res) => {
 });
 
 // GET /api/stats/weekly-activity - activity per week (last 12 weeks)
-app.get('/api/stats/weekly-activity', async (req, res) => {
+app.get('/api/stats/weekly-activity', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     // Activity log entries by week
@@ -637,7 +1299,7 @@ app.get('/api/stats/weekly-activity', async (req, res) => {
 });
 
 // GET /api/stats/weekly-summary - this week vs last week
-app.get('/api/stats/weekly-summary', async (req, res) => {
+app.get('/api/stats/weekly-summary', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
 
@@ -747,7 +1409,7 @@ app.get('/api/calendar/followups', async (req, res) => {
 });
 
 // GET /api/stats/weekly-report - full weekly report data
-app.get('/api/stats/weekly-report', async (req, res) => {
+app.get('/api/stats/weekly-report', requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
 
@@ -969,10 +1631,10 @@ app.post('/api/customers', async (req, res) => {
       n(f.source) || 'store',
       req.user.id,
     ]);
-    saveDb();
 
     const idResult = db.exec('SELECT last_insert_rowid()');
     const newId = idResult[0].values[0][0];
+    saveDb();
     res.json({ success: true, id: newId });
   } catch (err) {
     console.error('POST /api/customers error:', err);

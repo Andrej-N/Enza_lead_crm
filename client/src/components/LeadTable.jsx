@@ -7,7 +7,7 @@ const STATUS_CONFIG = {
   not_interested: { label: 'Nije zainteresovan', bg: 'bg-red-900/50 text-red-300' },
 }
 
-export default function LeadTable({ leads, loading, category, onSelect, onUpdateStatus }) {
+export default function LeadTable({ leads, loading, category, onSelect, onUpdateStatus, isAdmin = false, allowSelect = false, selectedIds, onToggleSelect }) {
   if (loading) {
     return <div className="text-center py-12 text-gray-500">Ucitavanje...</div>
   }
@@ -16,12 +16,16 @@ export default function LeadTable({ leads, loading, category, onSelect, onUpdate
     return <div className="text-center py-12 text-gray-500">Nema rezultata</div>
   }
 
+  const showCheckbox = isAdmin && allowSelect
+  const selSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || [])
+
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-750 border-b border-gray-700" style={{ backgroundColor: '#1e293b' }}>
+              {showCheckbox && <th className="px-3 py-3 w-8"></th>}
               <th className="text-left px-4 py-3 font-semibold text-gray-300">Naziv</th>
               {category === 'hotel' && <th className="text-left px-4 py-3 font-semibold text-gray-300">Zvezdice</th>}
               {category === 'hotel' && <th className="text-left px-4 py-3 font-semibold text-gray-300">Sobe</th>}
@@ -33,6 +37,7 @@ export default function LeadTable({ leads, loading, category, onSelect, onUpdate
               <th className="text-left px-4 py-3 font-semibold text-gray-300">Grad</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-300">Telefon</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-300">Email</th>
+              {isAdmin && <th className="text-left px-4 py-3 font-semibold text-gray-300">Dodeljen</th>}
               <th className="text-left px-4 py-3 font-semibold text-gray-300">Status</th>
               <th className="text-left px-4 py-3 font-semibold text-gray-300 w-8"></th>
             </tr>
@@ -40,12 +45,23 @@ export default function LeadTable({ leads, loading, category, onSelect, onUpdate
           <tbody className="divide-y divide-gray-700">
             {leads.map(lead => {
               const status = STATUS_CONFIG[lead.outreach_status] || STATUS_CONFIG.not_contacted
+              const isSelected = selSet.has(lead.id)
               return (
                 <tr
                   key={lead.id}
-                  className="hover:bg-gray-700/50 cursor-pointer transition"
+                  className={`hover:bg-gray-700/50 cursor-pointer transition ${isSelected ? 'bg-emerald-900/20' : ''}`}
                   onClick={() => onSelect(lead)}
                 >
+                  {showCheckbox && (
+                    <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleSelect && onToggleSelect(lead.id)}
+                        className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-100 flex items-center gap-1.5">
                       {lead.name}
@@ -91,6 +107,11 @@ export default function LeadTable({ leads, loading, category, onSelect, onUpdate
                       </a>
                     ) : <span className="text-gray-600">-</span>}
                   </td>
+                  {isAdmin && (
+                    <td className="px-4 py-3 text-xs text-gray-300">
+                      {lead.assigned_to_name || lead.assigned_to_username || <span className="text-gray-600">—</span>}
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <select
                       value={lead.outreach_status}

@@ -14,9 +14,16 @@ const CATEGORY_CONFIG = {
   prodavac: { label: 'Prodavci', icon: '🛋️', color: 'text-violet-400' },
 }
 
-export default function Sidebar({ filters, setFilters, setCategory, stats, view, setView, user, onLogout, mobileOpen, onMobileClose }) {
+export default function Sidebar({ filters, setFilters, setCategory, stats, view, setView, user, onLogout, onChangePassword, mobileOpen, onMobileClose, notif }) {
   // Helper: wrap any nav action so it also closes the mobile sidebar
   const nav = (fn) => () => { fn(); onMobileClose && onMobileClose() }
+  const isAdmin = user?.role === 'admin'
+  const newCount = notif?.newCount || 0
+  const totalAssigned = notif?.total || 0
+  // Defensive: stats may be missing fields if /api/stats failed (e.g. 403 for non-admin)
+  const byCategory = stats?.byCategory || {}
+  const byStatus = stats?.byStatus || {}
+  const total = stats?.total ?? 0
 
   return (
     <>
@@ -54,11 +61,30 @@ export default function Sidebar({ filters, setFilters, setCategory, stats, view,
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {isAdmin && (
+            <button
+              onClick={nav(() => setView('admin'))}
+              className={`w-full text-left px-3 py-2.5 md:py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 ${view === 'admin' ? 'bg-emerald-900/50 text-emerald-400' : 'text-gray-300 hover:bg-gray-700'}`}
+            >
+              <span>⚙️</span> Admin Panel
+            </button>
+          )}
+
           <button
-            onClick={nav(() => { setView('dashboard'); setFilters(f => ({ ...f, category: '' })) })}
-            className={`w-full text-left px-3 py-2.5 md:py-2 rounded-lg text-sm font-medium transition ${view === 'dashboard' ? 'bg-emerald-900/50 text-emerald-400' : 'text-gray-300 hover:bg-gray-700'}`}
+            onClick={nav(() => setView('my-leads'))}
+            className={`w-full text-left px-3 py-2.5 md:py-2 rounded-lg text-sm font-medium transition flex items-center justify-between gap-2 ${view === 'my-leads' ? 'bg-emerald-900/50 text-emerald-400' : 'text-gray-300 hover:bg-gray-700'}`}
           >
-            Dashboard
+            <span className="flex items-center gap-2">
+              <span>📌</span> Dodeljeni leadovi
+            </span>
+            <span className="flex items-center gap-1.5">
+              {newCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-600 text-white animate-pulse">
+                  {newCount > 99 ? '99+' : newCount} novo
+                </span>
+              )}
+              <span className="text-xs text-gray-500">{totalAssigned}</span>
+            </span>
           </button>
 
           <button
@@ -66,13 +92,6 @@ export default function Sidebar({ filters, setFilters, setCategory, stats, view,
             className={`w-full text-left px-3 py-2.5 md:py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 ${view === 'calendar' ? 'bg-blue-900/50 text-blue-400' : 'text-gray-300 hover:bg-gray-700'}`}
           >
             <span>📅</span> Kalendar
-          </button>
-
-          <button
-            onClick={nav(() => setView('daily-activity'))}
-            className={`w-full text-left px-3 py-2.5 md:py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 ${view === 'daily-activity' ? 'bg-emerald-900/50 text-emerald-400' : 'text-gray-300 hover:bg-gray-700'}`}
-          >
-            <span>📊</span> Dnevna aktivnost
           </button>
 
           <button
@@ -98,7 +117,7 @@ export default function Sidebar({ filters, setFilters, setCategory, stats, view,
                 <span className="mr-2">{cfg.icon}</span>
                 {cfg.label}
               </span>
-              <span className="text-xs text-gray-500">{stats.byCategory[key] || 0}</span>
+              <span className="text-xs text-gray-500">{byCategory[key] || 0}</span>
             </button>
           ))}
 
@@ -109,7 +128,7 @@ export default function Sidebar({ filters, setFilters, setCategory, stats, view,
             }`}
           >
             Svi Leadovi
-            <span className="text-xs text-gray-500 ml-2">{stats.total}</span>
+            <span className="text-xs text-gray-500 ml-2">{total}</span>
           </button>
 
           {/* Status summary */}
@@ -119,19 +138,30 @@ export default function Sidebar({ filters, setFilters, setCategory, stats, view,
           {Object.entries(STATUS_LABELS).map(([key, label]) => (
             <div key={key} className="flex items-center justify-between px-3 py-1 text-xs text-gray-400">
               <span>{label}</span>
-              <span className="font-medium">{stats.byStatus[key] || 0}</span>
+              <span className="font-medium">{byStatus[key] || 0}</span>
             </div>
           ))}
         </nav>
 
         <div className="p-4 border-t border-gray-700">
-          <div className="text-xs text-gray-500 mb-2">Ukupno leadova: {stats.total}</div>
+          <div className="text-xs text-gray-500 mb-2">Ukupno leadova: {total}</div>
           {user && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-400 font-medium">{user.displayName || user.username}</span>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => onChangePassword && onChangePassword()}
+                className="flex items-center gap-1.5 text-xs text-gray-300 hover:text-gray-100 font-medium truncate"
+                title="Klikni za promenu sifre"
+              >
+                <span className="truncate">{user.displayName || user.username}</span>
+                {isAdmin && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-900/50 text-emerald-300 flex-shrink-0">
+                    admin
+                  </span>
+                )}
+              </button>
               <button
                 onClick={onLogout}
-                className="text-xs text-red-400 hover:text-red-300 transition"
+                className="text-xs text-red-400 hover:text-red-300 transition flex-shrink-0"
               >
                 Odjavi se
               </button>

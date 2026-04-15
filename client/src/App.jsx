@@ -7,8 +7,11 @@ import Sidebar from './components/Sidebar'
 import CalendarView from './components/CalendarView'
 import DailyActivityView from './components/DailyActivityView'
 import CustomersView from './components/CustomersView'
+import MyLeadsView from './components/MyLeadsView'
 import LoginPage from './components/LoginPage'
 import LeadFilters from './components/LeadFilters'
+import AdminPanel from './components/AdminPanel'
+import ChangePasswordModal from './components/ChangePasswordModal'
 
 const API = '/api'
 
@@ -17,20 +20,61 @@ function App() {
   const [authChecked, setAuthChecked] = useState(false)
   const [leads, setLeads] = useState([])
   const [stats, setStats] = useState({ total: 0, byCategory: {}, byStatus: {} })
-  const [filters, setFilters] = useState({ category: '', subcategory: '', outreach_status: '', search: '', investor_size: '', construction_phase: '', city: '', has_phone: '', has_email: '', verified: '' })
+  const [filters, setFilters] = useState({ category: '', subcategory: '', outreach_status: '', search: '', investor_size: '', construction_phase: '', city: '', has_phone: '', has_email: '', verified: '', assigned_to: '' })
   const [selectedLead, setSelectedLead] = useState(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showChangePassword, setShowChangePassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [view, setView] = useState('dashboard')
+  const [view, setView] = useState('admin')
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [notif, setNotif] = useState({ total: 0, newCount: 0 })
 
-  // Default to Customers view on mobile (the main mobile use case)
+  const isAdmin = user?.role === 'admin'
+
+  // Adjust default view based on role and screen size
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768 && view === 'dashboard') {
-      setView('customers')
+    if (!user) return
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+    if (user.role === 'admin') {
+      setView(v => (v === 'admin' || v === 'dashboard') ? (isMobile ? 'my-leads' : 'admin') : v)
+    } else {
+      // Non-admin: force off admin/dashboard/daily-activity
+      setView(v => {
+        if (v === 'admin' || v === 'dashboard' || v === 'daily-activity') {
+          return 'my-leads'
+        }
+        return v
+      })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user])
+
+  // Poll notification count every 60s
+  const fetchNotif = async () => {
+    try {
+      const res = await fetch(`${API}/my/notifications`, { credentials: 'include' })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data && typeof data === 'object') {
+        setNotif({ total: data.total || 0, newCount: data.newCount || 0 })
+      }
+    } catch (err) { /* ignore */ }
+  }
+
+  useEffect(() => {
+    if (!user) return
+    fetchNotif()
+    const id = setInterval(fetchNotif, 60000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
+
+  const markNotifSeen = async () => {
+    try {
+      await fetch(`${API}/my/notifications/seen`, { method: 'POST', credentials: 'include' })
+      setNotif(n => ({ ...n, newCount: 0 }))
+    } catch (err) { /* ignore */ }
+  }
 
   // Check existing session on mount
   useEffect(() => {
@@ -57,11 +101,16 @@ function App() {
   }
 
   const fetchStats = async () => {
+    // /api/stats is admin-only — non-admins keep the empty initial state
+    if (!user || user.role !== 'admin') return
     try {
       const res = await fetch(`${API}/stats`, { credentials: 'include' })
       if (res.status === 401) { setUser(null); return }
+      if (!res.ok) return // 403 or 500 — keep prior stats, don't overwrite
       const data = await res.json()
-      setStats(data)
+      if (data && typeof data === 'object' && data.byCategory && data.byStatus) {
+        setStats(data)
+      }
     } catch (err) {
       console.error('Failed to fetch stats:', err)
     }
@@ -124,10 +173,12 @@ function App() {
 
   // Friendly title for mobile top bar
   const viewTitle = (() => {
+    if (view === 'admin') return 'Admin Panel'
     if (view === 'dashboard') return 'Dashboard'
     if (view === 'calendar') return 'Kalendar'
     if (view === 'daily-activity') return 'Dnevna aktivnost'
     if (view === 'customers') return 'Kupci'
+    if (view === 'my-leads') return 'Moji leadovi'
     if (view === 'leads') {
       if (filters.category === 'hotel') return 'Hoteli'
       if (filters.category === 'klinika') return 'Klinike'
@@ -139,8 +190,13 @@ function App() {
   })()
 
   // These views are dense/complex and not designed for phone screens
-  const desktopOnlyViews = new Set(['dashboard', 'leads', 'calendar'])
+  const desktopOnlyViews = new Set(['dashboard', 'leads', 'calendar', 'admin'])
   const isDesktopOnlyView = desktopOnlyViews.has(view)
+
+  const resetFiltersAndFetch = () => {
+    setFilters({ category: '', subcategory: '', outreach_status: '', search: '', investor_size: '', construction_phase: '', city: '', has_phone: '', has_email: '', verified: '', assigned_to: '' })
+    fetchLeads()
+  }
 
   return (
     <div className="flex h-screen bg-gray-900">
@@ -153,8 +209,10 @@ function App() {
         setView={setView}
         user={user}
         onLogout={logout}
+        onChangePassword={() => setShowChangePassword(true)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
+        notif={notif}
       />
 
       <main className="flex-1 overflow-auto">
@@ -162,15 +220,27 @@ function App() {
         <div className="md:hidden sticky top-0 z-30 bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
           <button
             onClick={() => setMobileSidebarOpen(true)}
-            className="text-gray-300 hover:text-white p-1 -ml-1"
+            className="relative text-gray-300 hover:text-white p-1 -ml-1"
             aria-label="Otvori meni"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
+            {notif.newCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-gray-800" />
+            )}
           </button>
           <h1 className="text-sm font-semibold text-gray-100 truncate">{viewTitle}</h1>
-          <div className="w-6" />
+          {notif.newCount > 0 ? (
+            <button
+              onClick={() => setView('my-leads')}
+              className="text-[10px] font-bold bg-red-600 text-white px-2 py-1 rounded-full animate-pulse"
+            >
+              {notif.newCount > 9 ? '9+' : notif.newCount} nov{notif.newCount === 1 ? '' : 'i'}
+            </button>
+          ) : (
+            <div className="w-6" />
+          )}
         </div>
 
         {/* Desktop-only banner shown on mobile */}
@@ -200,18 +270,40 @@ function App() {
 
         {/* Wrap actual views — hide desktop-only ones on mobile */}
         <div className={isDesktopOnlyView ? 'hidden md:block' : ''}>
-          {view === 'dashboard' ? (
-            <Dashboard stats={stats} setCategory={setCategory} leads={leads} fetchLeads={() => { setFilters({ category: '', subcategory: '', outreach_status: '', search: '', investor_size: '', construction_phase: '', city: '', has_phone: '', has_email: '', verified: '' }); fetchLeads(); }} />
+          {view === 'admin' && isAdmin ? (
+            <AdminPanel
+              stats={stats}
+              setCategory={setCategory}
+              leads={leads}
+              onSelectLead={setSelectedLead}
+              resetFiltersAndFetch={resetFiltersAndFetch}
+            />
+          ) : view === 'dashboard' && isAdmin ? (
+            <Dashboard stats={stats} setCategory={setCategory} leads={leads} fetchLeads={resetFiltersAndFetch} />
           ) : view === 'calendar' ? (
             <CalendarView onSelectLead={(lead) => {
               if (lead.id) {
                 fetch(`/api/leads/${lead.id}`, { credentials: 'include' }).then(r => r.json()).then(setSelectedLead).catch(console.error)
               }
             }} />
-          ) : view === 'daily-activity' ? (
+          ) : view === 'daily-activity' && isAdmin ? (
             <DailyActivityView onSelectLead={setSelectedLead} />
           ) : view === 'customers' ? (
             <CustomersView />
+          ) : view === 'my-leads' ? (
+            <MyLeadsView
+              user={user}
+              defaultMine={true}
+              onMarkSeen={markNotifSeen}
+              onSelectLead={(lead) => {
+                if (lead.id) {
+                  fetch(`${API}/leads/${lead.id}`, { credentials: 'include' })
+                    .then(r => r.json())
+                    .then(setSelectedLead)
+                    .catch(console.error)
+                }
+              }}
+            />
           ) : (
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
@@ -231,7 +323,7 @@ function App() {
                 </button>
               </div>
 
-              <LeadFilters filters={filters} setFilters={setFilters} />
+              <LeadFilters filters={filters} setFilters={setFilters} isAdmin={isAdmin} />
 
               <LeadTable
                 leads={leads}
@@ -239,6 +331,7 @@ function App() {
                 category={filters.category}
                 onSelect={setSelectedLead}
                 onUpdateStatus={(id, status) => updateLead(id, { outreach_status: status })}
+                isAdmin={isAdmin}
               />
             </div>
           )}
@@ -248,6 +341,8 @@ function App() {
       {selectedLead && (
         <LeadModal
           lead={selectedLead}
+          isAdmin={isAdmin}
+          canEdit={isAdmin || selectedLead.assigned_to === user?.id}
           onClose={() => setSelectedLead(null)}
           onUpdate={(fields) => { updateLead(selectedLead.id, fields); setSelectedLead({ ...selectedLead, ...fields }) }}
           onDelete={() => deleteLead(selectedLead.id)}
@@ -260,6 +355,10 @@ function App() {
           onCreate={createLead}
           category={filters.category}
         />
+      )}
+
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
       )}
     </div>
   )

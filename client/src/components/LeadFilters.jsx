@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const STATUS_OPTIONS = [
   ['', 'Svi statusi', 'bg-gray-600'],
@@ -25,8 +25,18 @@ const CITIES = [
 
 const KNOWN_CITIES = CITIES.map(c => c[0])
 
-export default function LeadFilters({ filters, setFilters }) {
+export default function LeadFilters({ filters, setFilters, isAdmin = false, users: usersProp = null }) {
   const [showMore, setShowMore] = useState(false)
+  const [users, setUsers] = useState(usersProp || [])
+
+  useEffect(() => {
+    if (usersProp) { setUsers(usersProp); return }
+    if (!isAdmin) return
+    fetch('/api/users', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setUsers(Array.isArray(data) ? data.filter(u => u.active) : []))
+      .catch(() => setUsers([]))
+  }, [isAdmin, usersProp])
 
   const activeFilterCount = [
     filters.city,
@@ -36,6 +46,7 @@ export default function LeadFilters({ filters, setFilters }) {
     filters.subcategory,
     filters.investor_size,
     filters.construction_phase,
+    isAdmin ? filters.assigned_to : '',
   ].filter(Boolean).length
 
   const activeChips = []
@@ -56,6 +67,15 @@ export default function LeadFilters({ filters, setFilters }) {
     const labels = { all: 'Potpuno verifikovani', phone: 'Verif. telefon', email: 'Verif. email', none: 'Neverifikovani' }
     activeChips.push({ label: labels[filters.verified], key: 'verified' })
   }
+  if (isAdmin && filters.assigned_to) {
+    let label = 'Dodeljen'
+    if (filters.assigned_to === 'unassigned') label = 'Neraspoređeni'
+    else {
+      const u = users.find(x => String(x.id) === String(filters.assigned_to))
+      if (u) label = `Dodeljen: ${u.display_name || u.username}`
+    }
+    activeChips.push({ label, key: 'assigned_to' })
+  }
 
   const clearFilter = (key) => {
     setFilters(f => ({ ...f, [key]: '' }))
@@ -65,7 +85,8 @@ export default function LeadFilters({ filters, setFilters }) {
     setFilters(f => ({
       ...f,
       outreach_status: '', city: '', has_phone: '', has_email: '',
-      verified: '', subcategory: '', investor_size: '', construction_phase: '', search: ''
+      verified: '', subcategory: '', investor_size: '', construction_phase: '', search: '',
+      ...(isAdmin ? { assigned_to: '' } : {})
     }))
   }
 
@@ -276,6 +297,24 @@ export default function LeadFilters({ filters, setFilters }) {
               </select>
             </div>
           </div>
+
+          {/* Row 3: Assigned (admin only) */}
+          {isAdmin && (
+            <div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">Dodeljen</label>
+              <select
+                value={filters.assigned_to || ''}
+                onChange={e => setFilters(f => ({ ...f, assigned_to: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg text-sm border border-gray-600 bg-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="">Svi</option>
+                <option value="unassigned">Neraspoređeni</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>{u.display_name || u.username}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
     </div>

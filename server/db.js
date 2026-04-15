@@ -1,6 +1,7 @@
 const initSqlJs = require('sql.js');
 const fs = require('fs');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 
 // In production (Render), DB_PATH points to a mounted persistent disk
 // (e.g. /var/data/enza_leads.db). Locally it falls back to repo path.
@@ -132,9 +133,59 @@ function initSchema(db) {
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       display_name TEXT,
+      role TEXT DEFAULT 'user',
+      active INTEGER DEFAULT 1,
+      created_by INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // Migration: add role/active/created_by for existing user tables
+  try { db.run("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"); } catch (e) {}
+  try { db.run("ALTER TABLE users ADD COLUMN active INTEGER DEFAULT 1"); } catch (e) {}
+  try { db.run("ALTER TABLE users ADD COLUMN created_by INTEGER"); } catch (e) {}
+  // Notification: when user last opened "Dodeljeni leadovi" view
+  try { db.run("ALTER TABLE users ADD COLUMN last_assignments_viewed_at TEXT"); } catch (e) {}
+
+  // Make sure any user named 'admin' (case-insensitive) is actually admin
+  try { db.run("UPDATE users SET role = 'admin' WHERE LOWER(username) = 'admin'"); } catch (e) {}
+
+  // Seed a default admin if none exists (first deploy on fresh/old DB without admin)
+  try {
+    const adminCheck = db.exec("SELECT COUNT(*) FROM users WHERE role = 'admin'");
+    const adminCount = adminCheck.length ? adminCheck[0].values[0][0] : 0;
+    if (adminCount === 0) {
+      const hash = bcrypt.hashSync('admin123', 10);
+      db.run(
+        "INSERT INTO users (username, password_hash, display_name, role, active) VALUES (?, ?, ?, 'admin', 1)",
+        ['admin', hash, 'Admin']
+      );
+      console.log('[db] Seeded default admin user (username: admin, password: admin123) — CHANGE PASSWORD AFTER FIRST LOGIN');
+    }
+  } catch (e) { console.error('[db] admin seed failed:', e.message); }
+  // Make sure all users have a role set (defaults to 'user' for any that are NULL)
+  try { db.run("UPDATE users SET role = 'user' WHERE role IS NULL"); } catch (e) {}
+  // Make sure all users are active by default (NULL → 1)
+  try { db.run("UPDATE users SET active = 1 WHERE active IS NULL"); } catch (e) {}
+
+  // Print user roster on startup so misconfigured roles are obvious in logs
+  try {
+    const r = db.exec("SELECT username, role, active FROM users ORDER BY id");
+    if (r.length && r[0].values.length) {
+      console.log('[db] Users:');
+      r[0].values.forEach(([u, role, active]) => {
+        console.log(`  - ${u} | role=${role} | active=${active}`);
+      });
+    }
+  } catch (e) {}
+
+  // Migration: lead assignment fields
+  try { db.run("ALTER TABLE leads ADD COLUMN assigned_to INTEGER"); } catch (e) {}
+  try { db.run("ALTER TABLE leads ADD COLUMN assigned_at TEXT"); } catch (e) {}
+  try { db.run("ALTER TABLE leads ADD COLUMN assigned_by INTEGER"); } catch (e) {}
+
+  // Migration: who performed each activity
+  try { db.run("ALTER TABLE activity_log ADD COLUMN user_id INTEGER"); } catch (e) {}
 
   // Walk-in retail customers (B2C) — separate from leads (B2B pipeline)
   db.run(`

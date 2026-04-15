@@ -126,8 +126,47 @@ function EditableTextArea({ label, value, field, onSave }) {
   )
 }
 
-export default function LeadModal({ lead, onClose, onUpdate, onDelete }) {
+export default function LeadModal({ lead, onClose, onUpdate: rawOnUpdate, onDelete, isAdmin = false, canEdit = true }) {
   const status = STATUS_CONFIG[lead.outreach_status] || STATUS_CONFIG.not_contacted
+  const [users, setUsers] = useState([])
+  const [assignBusy, setAssignBusy] = useState(false)
+
+  // If canEdit is false, intercept all updates and show a friendly message instead
+  // of letting requests hit the backend and fail with 403.
+  const onUpdate = canEdit
+    ? rawOnUpdate
+    : (fields) => {
+        // Allow no-op refreshes (empty object after assign etc.)
+        if (!fields || Object.keys(fields).length === 0) return rawOnUpdate(fields)
+        alert('Ovaj lead nije dodeljen tebi — samo pregled. Trazi admina da ti ga dodeli ako zelis da ga uredjujes.')
+      }
+
+  useEffect(() => {
+    if (!isAdmin) return
+    fetch('/api/users', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setUsers(Array.isArray(data) ? data.filter(u => u.active) : []))
+      .catch(() => setUsers([]))
+  }, [isAdmin])
+
+  const handleAssign = async (userId) => {
+    setAssignBusy(true)
+    try {
+      await fetch('/api/leads/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ lead_ids: [lead.id], user_id: userId === '' ? null : parseInt(userId, 10) })
+      })
+      // Trigger parent refresh by calling onUpdate with empty diff
+      onUpdate({})
+    } catch (err) {
+      console.error('Assign failed:', err)
+    }
+    setAssignBusy(false)
+  }
+
+  const assignedLabel = lead.assigned_to_name || lead.assigned_to_username
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-end" onClick={onClose}>
@@ -136,16 +175,47 @@ export default function LeadModal({ lead, onClose, onUpdate, onDelete }) {
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center justify-between z-10">
-          <div>
+        <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-start justify-between z-10">
+          <div className="flex-1 min-w-0">
             <h2 className="text-lg font-bold text-gray-100">{lead.name}</h2>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-xs text-gray-400">{lead.category === 'hotel' ? 'Hotel' : lead.category === 'klinika' ? 'Klinika' : lead.category === 'investitor' ? 'Investitor' : 'Prodavac'}</span>
               {lead.subcategory && <span className="text-xs text-gray-500">/ {lead.subcategory}</span>}
+              {assignedLabel ? (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-900/50 text-emerald-300">
+                  Dodeljen: {assignedLabel}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-700 text-gray-400">
+                  Nije dodeljen
+                </span>
+              )}
             </div>
+            {isAdmin && (
+              <div className="mt-2">
+                <select
+                  value={lead.assigned_to || ''}
+                  onChange={e => handleAssign(e.target.value)}
+                  disabled={assignBusy}
+                  className="text-xs px-2 py-1 rounded border border-gray-600 bg-gray-700 text-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
+                >
+                  <option value="">— Nije dodeljen —</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.display_name || u.username}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-2xl leading-none">&times;</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-2xl leading-none ml-2">&times;</button>
         </div>
+
+        {!canEdit && (
+          <div className="bg-amber-900/30 border-b border-amber-800/60 px-6 py-3 text-xs text-amber-300 flex items-center gap-2">
+            <span>👁️</span>
+            <span>Samo za pregled — ovaj lead nije dodeljen tebi.</span>
+          </div>
+        )}
 
         <div className="px-6 py-4">
           {/* Status */}
@@ -318,15 +388,17 @@ export default function LeadModal({ lead, onClose, onUpdate, onDelete }) {
             <ActivityTimeline leadId={lead.id} />
           </div>
 
-          {/* Delete */}
-          <div className="mt-8 pt-4 border-t border-gray-700">
-            <button
-              onClick={onDelete}
-              className="text-red-400 text-xs hover:text-red-300 transition"
-            >
-              Obrisi ovaj lead
-            </button>
-          </div>
+          {/* Delete — admin only */}
+          {isAdmin && (
+            <div className="mt-8 pt-4 border-t border-gray-700">
+              <button
+                onClick={onDelete}
+                className="text-red-400 text-xs hover:text-red-300 transition"
+              >
+                Obrisi ovaj lead
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
